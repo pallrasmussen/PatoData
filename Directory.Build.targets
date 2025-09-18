@@ -1,0 +1,25 @@
+<Project>
+  <!-- Instrument CoreCompile timing: writes timestamps (ISO 8601 + ticks) to build_timing.log in solution root -->
+  <PropertyGroup>
+    <_TimingLog>$(MSBuildThisFileDirectory)build_timing.log</_TimingLog>
+  </PropertyGroup>
+
+  <Target Name="_LogBeforeCoreCompile" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <!-- Use a simple, safe sortable UTC stamp (replace ':' with '-') to avoid parser edge cases -->
+      <_CoreCompileStartUtc>$([System.DateTime]::UtcNow.ToString("yyyy-MM-ddTHH-mm-ssZ"))</_CoreCompileStartUtc>
+      <_CoreCompileStartTicks>$([System.DateTime]::UtcNow.Ticks)</_CoreCompileStartTicks>
+    </PropertyGroup>
+    <Message Importance="High" Text="[Timing] CoreCompile START $(MSBuildProjectName) at $(_CoreCompileStartUtc) (ticks=$(_CoreCompileStartTicks))" />
+    <WriteLinesToFile File="$(_TimingLog)" Lines="[Timing] START $(MSBuildProjectName) $(MSBuildProjectFullPath) $(Configuration)|$(TargetFramework) $(Platform) $(RuntimeIdentifier) at $(_CoreCompileStartUtc) ticks=$(_CoreCompileStartTicks)" Overwrite="False" />
+  </Target>
+
+  <Target Name="_LogAfterCoreCompile" AfterTargets="CoreCompile">
+    <PropertyGroup>
+      <_CoreCompileEndUtc>$([System.DateTime]::UtcNow.ToString("yyyy-MM-ddTHH-mm-ssZ"))</_CoreCompileEndUtc>
+      <_CoreCompileEndTicks>$([System.DateTime]::UtcNow.Ticks)</_CoreCompileEndTicks>
+    </PropertyGroup>
+    <Message Importance="High" Text="[Timing] CoreCompile END $(MSBuildProjectName) at $(_CoreCompileEndUtc) (ticks=$(_CoreCompileEndTicks))" />
+    <WriteLinesToFile File="$(_TimingLog)" Lines="[Timing] END $(MSBuildProjectName) $(MSBuildProjectFullPath) at $(_CoreCompileEndUtc) ticks=$(_CoreCompileEndTicks)" Overwrite="False" />
+  </Target>
+</Project>

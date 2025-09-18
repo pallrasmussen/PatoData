@@ -1,0 +1,57 @@
+# top-most EditorConfig file
+root = true
+
+# All files
+[*]
+charset = utf-8
+end_of_line = crlf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+
+[*.cs]
+dotnet_diagnostic.CA2000.severity = warning
+dotnet_diagnostic.CA1305.severity = suggestion
+dotnet_diagnostic.CA1822.severity = suggestion
+dotnet_diagnostic.CA1823.severity = warning
+dotnet_diagnostic.CA1806.severity = suggestion
+dotnet_diagnostic.CA1062.severity = suggestion
+dotnet_diagnostic.CA1716.severity = none
+
+# Roslynator examples
+dotnet_diagnostic.RCS1036.severity = suggestion   # Remove redundant empty line
+dotnet_diagnostic.RCS1163.severity = suggestion   # Unused parameter
+dotnet_diagnostic.RCS1213.severity = suggestion   # Remove unused member declaration
+
+# StyleCop tuning (disable noisy docs rules)
+dotnet_diagnostic.SA1600.severity = none  # Elements must be documented
+dotnet_diagnostic.SA1601.severity = none  # Partial elements must be documented
+dotnet_diagnostic.SA1633.severity = none  # File header
+dotnet_diagnostic.SA1200.severity = none  # Using directives placement
+dotnet_diagnostic.SA1101.severity = none  # Prefix local calls with this
+dotnet_diagnostic.SA1309.severity = none  # Field names must not begin with underscore
+dotnet_diagnostic.SA1503.severity = none  # Allow single-line statements without braces
+
+# Disable all StyleCop warnings by default; re-enable selectively if desired
+dotnet_analyzer_diagnostic.category-StyleCop.severity = none
+
+# Explicitly disable commonly noisy StyleCop IDs we observed
+dotnet_diagnostic.SA1501.severity = none  # Statement should not be on a single line
+dotnet_diagnostic.SA1502.severity = none  # Element should not be on a single line
+dotnet_diagnostic.SA1107.severity = none  # Multiple statements on one line
+dotnet_diagnostic.SA1413.severity = none  # Trailing comma in multi-line initializers
+dotnet_diagnostic.SA1122.severity = none  # Use string.Empty for empty strings
+dotnet_diagnostic.SA1316.severity = none  # Tuple element names casing
+dotnet_diagnostic.SA0001.severity = none  # XML comment analysis disabled note
+
+# Naming preferences
+dotnet_naming_rule.private_fields_underscore.required_symbol_kind = field
+dotnet_naming_rule.private_fields_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore.style = prefix_underscore
+
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+
+dotnet_naming_style.prefix_underscore.capitalization = camel_case
+dotnet_naming_style.prefix_underscore.required_prefix = _

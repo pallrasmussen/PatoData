@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "patodata-xsd-analyzer"
+version = "0.1.0"
+description = "Analyze XSDs and generate summaries and example XML"
+readme = "README.md"
+authors = [{name = "Your Name"}]
+requires-python = ">=3.10"
+dependencies = [
+    "xmlschema==3.3.1",
+    "lxml==5.2.2",
+    "rich==13.7.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+addopts = "-q"

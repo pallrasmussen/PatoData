@@ -1,0 +1,80 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Environments
+.env
+.venv
+ENV/
+env/
+venv/
+
+# VSCode
+.vscode/
+
+# mypy
+.mypy_cache/
+
+# .NET build
+bin/
+obj/
+
+# Generated artifacts
+out/
+xml/imported/
+xml/error/
+
+# Logs and observability
+*.log
+*.bak
+out/observability.jsonl
+out/observability.stats.json
+out/import_audit.csv
+
+# Local overrides
+scripts/*.local.ps1
+scripts/service.env.local.ps1

@@ -1,0 +1,213 @@
+<?xml version="1.0"?>
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="" xmlns:prodata="urn:schemas-progress-com:xml-prodata:0001">
+  <xsd:element name="DSET" prodata:proDataSet="true">
+    <xsd:complexType>
+      <xsd:sequence>
+        <xsd:element name="REKV" minOccurs="0" maxOccurs="unbounded" prodata:tableName="ttRekv">
+          <xsd:complexType>
+            <xsd:sequence>
+              <xsd:element name="UNDAFD" type="xsd:string" nillable="true"/>
+              <xsd:element name="UNDAFDSOR" type="xsd:string" nillable="true"/>
+              <xsd:element name="UNDYDER" type="xsd:string" nillable="true"/>
+              <xsd:element name="UNDYDERSOR" type="xsd:string" nillable="true"/>
+              <xsd:element name="UNDNR" type="xsd:string" nillable="true"/>
+              <xsd:element name="PRIORITET" type="xsd:string" nillable="true"/>
+              <xsd:element name="TEAM" type="xsd:string" nillable="true"/>
+              <xsd:element name="CPRNR" type="xsd:string" nillable="true"/>
+              <xsd:element name="CPRNRMOR" type="xsd:string" nillable="true"/>
+              <xsd:element name="KOMMUNE" type="xsd:string" nillable="true"/>
+              <xsd:element name="REKVAFD" type="xsd:string" nillable="true"/>
+              <xsd:element name="REKVAFDSOR" type="xsd:string" nillable="true"/>
+              <xsd:element name="REKVYDER" type="xsd:string" nillable="true"/>
+              <xsd:element name="REKVYDERSOR" type="xsd:string" nillable="true"/>
+              <xsd:element name="STAMAFD" type="xsd:string" nillable="true"/>
+              <xsd:element name="STAMAFDSOR" type="xsd:string" nillable="true"/>
+              <xsd:element name="FOLKEUND" type="xsd:string" nillable="true"/>
+              <xsd:element name="REKVDATO" type="xsd:string" nillable="true"/>
+              <xsd:element name="REKVKLK" type="xsd:string" nillable="true"/>
+              <xsd:element name="MODTDATO" type="xsd:string" nillable="true"/>
+              <xsd:element name="MODTKLK" type="xsd:string" nillable="true"/>
+              <xsd:element name="FORLSDATO" type="xsd:string" nillable="true"/>
+              <xsd:element name="FORLSKLK" type="xsd:string" nillable="true"/>
+              <xsd:element name="SVARDATO" type="xsd:string" nillable="true"/>
+              <xsd:element name="SVARKLK" type="xsd:string" nillable="true"/>
+              <xsd:element name="SUPPLDATO" type="xsd:string" nillable="true"/>
+              <xsd:element name="SUPPLKLK" type="xsd:string" nillable="true"/>
+              <xsd:element name="SENEDATO" type="xsd:string" nillable="true"/>
+              <xsd:element name="SENEKLK" type="xsd:string" nillable="true"/>
+              <xsd:element name="STAMANSV" type="xsd:string" nillable="true"/>
+              <xsd:element name="LPRP" minOccurs="0" maxOccurs="unbounded" prodata:tableName="ttLprp0">
+                <xsd:complexType>
+                  <xsd:sequence>
+                    <xsd:element name="MATTYPE" type="xsd:string" nillable="true"/>
+                    <xsd:element name="MATANTAL" type="xsd:string" nillable="true"/>
+                    <xsd:element name="PaAlmBlok" type="xsd:string" nillable="true"/>
+                    <xsd:element name="PaMakBlok" type="xsd:string" nillable="true"/>
+                    <xsd:element name="StansTMA" type="xsd:string" nillable="true"/>
+                    <xsd:element name="FrysBlok" type="xsd:string" nillable="true"/>
+                    <xsd:element name="BioBank" type="xsd:string" nillable="true"/>
+                    <xsd:element name="EmBlok" type="xsd:string" nillable="true"/>
+                    <xsd:element name="biobcelle" type="xsd:string" nillable="true"/>
+                    <xsd:element name="andcelle" type="xsd:string" nillable="true"/>
+                    <xsd:element name="krommat" type="xsd:string" nillable="true"/>
+                    <xsd:element name="GlasAlm" type="xsd:string" nillable="true"/>
+                    <xsd:element name="GlasMak" type="xsd:string" nillable="true"/>
+                    <xsd:element name="ImmunAlm" type="xsd:string" nillable="true"/>
+                    <xsd:element name="ISHutaelAlm" type="xsd:string" nillable="true"/>
+                    <xsd:element name="ISHmtaelAlm" type="xsd:string" nillable="true"/>
+                    <xsd:element name="EMgrid" type="xsd:string" nillable="true"/>
+                    <xsd:element name="RorPCR" type="xsd:string" nillable="true"/>
+                    <xsd:element name="RorFlow" type="xsd:string" nillable="true"/>
+                    <xsd:element name="GlasKrom" type="xsd:string" nillable="true"/>
+                    <xsd:element name="anapcra" type="xsd:string" nillable="true"/>
+                    <xsd:element name="anapcrb" type="xsd:string" nillable="true"/>
+                    <xsd:element name="anapcrc" type="xsd:string" nillable="true"/>
+                    <xsd:element name="anapcrd" type="xsd:string" nillable="true"/>
+                    <xsd:element name="anapcre" type="xsd:string" nillable="true"/>
+                    <xsd:element name="immunfr" type="xsd:string" nillable="true"/>
+                    <xsd:element name="emglas" type="xsd:string" nillable="true"/>
+                    <xsd:element name="anadna" type="xsd:string" nillable="true"/>
+                    <xsd:element name="ananerve" type="xsd:string" nillable="true"/>
+                    <xsd:element name="glaseus" type="xsd:string" nillable="true"/>
+                    <xsd:element name="AntGlas" type="xsd:string" nillable="true"/>
+                    <xsd:element name="SpecFarv" type="xsd:string" nillable="true"/>
+                    <xsd:element name="AntCelle" type="xsd:string" nillable="true"/>
+                    <xsd:element name="PROCANA" type="xsd:string" nillable="true"/>
+                    <xsd:element name="Haste" type="xsd:string" nillable="true"/>
+                    <xsd:element name="AndenSpc" type="xsd:string" nillable="true"/>
+                    <xsd:element name="LaanBlok" type="xsd:string" nillable="true"/>
+                    <xsd:element name="GlasUf" type="xsd:string" nillable="true"/>
+                    <xsd:element name="GlasFrys" type="xsd:string" nillable="true"/>
+                    <xsd:element name="ImmunTMA" type="xsd:string" nillable="true"/>
+                    <xsd:element name="ISHutaelTMA" type="xsd:string" nillable="true"/>
+                    <xsd:element name="ISHmtaelTMA" type="xsd:string" nillable="true"/>
+                  </xsd:sequence>
+                  <xsd:attribute name="inst" type="xsd:string"/>
+                  <xsd:attribute name="rekvnr" type="xsd:string"/>
+                </xsd:complexType>
+              </xsd:element>
+              <xsd:element name="MATE" minOccurs="0" maxOccurs="unbounded" prodata:tableName="ttMate">
+                <xsd:complexType>
+                  <xsd:sequence>
+                    <xsd:element name="MATNR" type="xsd:int" nillable="true"/>
+                    <xsd:element name="MATTYPE" type="xsd:string" nillable="true"/>
+                    <xsd:element name="LPRP" minOccurs="0" maxOccurs="unbounded" prodata:tableName="ttLprp">
+                      <xsd:complexType>
+                        <xsd:sequence>
+                          <xsd:element name="MATTYPE" type="xsd:string" nillable="true"/>
+                          <xsd:element name="MATANTAL" type="xsd:string" nillable="true"/>
+                          <xsd:element name="PaAlmBlok" type="xsd:string" nillable="true"/>
+                          <xsd:element name="PaMakBlok" type="xsd:string" nillable="true"/>
+                          <xsd:element name="StansTMA" type="xsd:string" nillable="true"/>
+                          <xsd:element name="FrysBlok" type="xsd:string" nillable="true"/>
+                          <xsd:element name="BioBank" type="xsd:string" nillable="true"/>
+                          <xsd:element name="EmBlok" type="xsd:string" nillable="true"/>
+                          <xsd:element name="biobcelle" type="xsd:string" nillable="true"/>
+                          <xsd:element name="andcelle" type="xsd:string" nillable="true"/>
+                          <xsd:element name="krommat" type="xsd:string" nillable="true"/>
+                          <xsd:element name="GlasAlm" type="xsd:string" nillable="true"/>
+                          <xsd:element name="GlasMak" type="xsd:string" nillable="true"/>
+                          <xsd:element name="ImmunAlm" type="xsd:string" nillable="true"/>
+                          <xsd:element name="ISHutaelAlm" type="xsd:string" nillable="true"/>
+                          <xsd:element name="ISHmtaelAlm" type="xsd:string" nillable="true"/>
+                          <xsd:element name="EMgrid" type="xsd:string" nillable="true"/>
+                          <xsd:element name="RorPCR" type="xsd:string" nillable="true"/>
+                          <xsd:element name="RorFlow" type="xsd:string" nillable="true"/>
+                          <xsd:element name="GlasKrom" type="xsd:string" nillable="true"/>
+                          <xsd:element name="anapcra" type="xsd:string" nillable="true"/>
+                          <xsd:element name="anapcrb" type="xsd:string" nillable="true"/>
+                          <xsd:element name="anapcrc" type="xsd:string" nillable="true"/>
+                          <xsd:element name="anapcrd" type="xsd:string" nillable="true"/>
+                          <xsd:element name="anapcre" type="xsd:string" nillable="true"/>
+                          <xsd:element name="immunfr" type="xsd:string" nillable="true"/>
+                          <xsd:element name="emglas" type="xsd:string" nillable="true"/>
+                          <xsd:element name="anadna" type="xsd:string" nillable="true"/>
+                          <xsd:element name="ananerve" type="xsd:string" nillable="true"/>
+                          <xsd:element name="glaseus" type="xsd:string" nillable="true"/>
+                          <xsd:element name="AntGlas" type="xsd:string" nillable="true"/>
+                          <xsd:element name="SpecFarv" type="xsd:string" nillable="true"/>
+                          <xsd:element name="AntCelle" type="xsd:string" nillable="true"/>
+                          <xsd:element name="PROCANA" type="xsd:string" nillable="true"/>
+                          <xsd:element name="Haste" type="xsd:string" nillable="true"/>
+                          <xsd:element name="AndenSpc" type="xsd:string" nillable="true"/>
+                          <xsd:element name="LaanBlok" type="xsd:string" nillable="true"/>
+                          <xsd:element name="GlasUf" type="xsd:string" nillable="true"/>
+                          <xsd:element name="GlasFrys" type="xsd:string" nillable="true"/>
+                          <xsd:element name="ImmunTMA" type="xsd:string" nillable="true"/>
+                          <xsd:element name="ISHutaelTMA" type="xsd:string" nillable="true"/>
+                          <xsd:element name="ISHmtaelTMA" type="xsd:string" nillable="true"/>
+                        </xsd:sequence>
+                        <xsd:attribute name="inst" type="xsd:string"/>
+                        <xsd:attribute name="rekvnr" type="xsd:string"/>
+                      </xsd:complexType>
+                    </xsd:element>
+                    <xsd:element name="DIAG" minOccurs="0" maxOccurs="unbounded" prodata:tableName="ttDiag">
+                      <xsd:complexType>
+                        <xsd:sequence>
+                          <xsd:element name="MATNR" type="xsd:int" nillable="true"/>
+                          <xsd:element name="SEKVENSNR" type="xsd:string" nillable="true"/>
+                          <xsd:element name="SNOMEDKODE" type="xsd:string" nillable="true"/>
+                          <xsd:element name="FRITEKST" type="xsd:string" nillable="true"/>
+                        </xsd:sequence>
+                        <xsd:attribute name="inst" type="xsd:string"/>
+                        <xsd:attribute name="rekvnr" type="xsd:string"/>
+                      </xsd:complexType>
+                    </xsd:element>
+                    <xsd:element name="MAKR" minOccurs="0" maxOccurs="unbounded" prodata:tableName="ttMakr">
+                      <xsd:complexType>
+                        <xsd:sequence>
+                          <xsd:element name="MATNR" type="xsd:int" nillable="true"/>
+                          <xsd:element name="SEKVENSNR" type="xsd:string" nillable="true"/>
+                          <xsd:element name="FRITEKST" type="xsd:string" nillable="true"/>
+                        </xsd:sequence>
+                        <xsd:attribute name="inst" type="xsd:string"/>
+                        <xsd:attribute name="rekvnr" type="xsd:string"/>
+                      </xsd:complexType>
+                    </xsd:element>
+                    <xsd:element name="MIKR" minOccurs="0" maxOccurs="unbounded" prodata:tableName="ttMikr">
+                      <xsd:complexType>
+                        <xsd:sequence>
+                          <xsd:element name="MATNR" type="xsd:int" nillable="true"/>
+                          <xsd:element name="SEKVENSNR" type="xsd:string" nillable="true"/>
+                          <xsd:element name="FRITEKST" type="xsd:string" nillable="true"/>
+                        </xsd:sequence>
+                        <xsd:attribute name="inst" type="xsd:string"/>
+                        <xsd:attribute name="rekvnr" type="xsd:string"/>
+                      </xsd:complexType>
+                    </xsd:element>
+                    <xsd:element name="KONK" minOccurs="0" maxOccurs="unbounded" prodata:tableName="ttKonk">
+                      <xsd:complexType>
+                        <xsd:sequence>
+                          <xsd:element name="MATNR" type="xsd:int" nillable="true"/>
+                          <xsd:element name="SEKVENSNR" type="xsd:string" nillable="true"/>
+                          <xsd:element name="FRITEKST" type="xsd:string" nillable="true"/>
+                        </xsd:sequence>
+                        <xsd:attribute name="inst" type="xsd:string"/>
+                        <xsd:attribute name="rekvnr" type="xsd:string"/>
+                      </xsd:complexType>
+                    </xsd:element>
+                  </xsd:sequence>
+                  <xsd:attribute name="inst" type="xsd:string"/>
+                  <xsd:attribute name="rekvnr" type="xsd:string"/>
+                </xsd:complexType>
+              </xsd:element>
+            </xsd:sequence>
+            <xsd:attribute name="inst" type="xsd:string"/>
+            <xsd:attribute name="rekvnr" type="xsd:string"/>
+          </xsd:complexType>
+        </xsd:element>
+      </xsd:sequence>
+    </xsd:complexType>
+  </xsd:element>
+  <xsd:annotation>
+    <xsd:appinfo>
+      <prodata:relation name="RelRekvLprp0" prodata:nested="true" prodata:parent="ttRekv" prodata:child="ttLprp0" prodata:relationFields="inst,inst,rekvnr,rekvnr"/>
+      <prodata:relation name="RelRekvMate" prodata:nested="true" prodata:parent="ttRekv" prodata:child="ttMate" prodata:relationFields="inst,inst,rekvnr,rekvnr"/>
+      <prodata:relation name="RelRekvLprp" prodata:nested="true" prodata:parent="ttMate" prodata:child="ttLprp" prodata:relationFields="inst,inst,rekvnr,rekvnr,MATNR,matnr"/>
+      <prodata:relation name="RelRekvDiag" prodata:nested="true" prodata:parent="ttMate" prodata:child="ttDiag" prodata:relationFields="inst,inst,rekvnr,rekvnr,MATNR,MATNR"/>
+      <prodata:relation name="RelRekvMakr" prodata:nested="true" prodata:parent="ttMate" prodata:child="ttMakr" prodata:relationFields="inst,inst,rekvnr,rekvnr,MATNR,MATNR"/>
+      <prodata:relation name="RelRekvMikr" prodata:nested="true" prodata:parent="ttMate" prodata:child="ttMikr" prodata:relationFields="inst,inst,rekvnr,rekvnr,MATNR,MATNR"/>
+      <prodata:relation name="RelRekvKonk" prodata:nested="true" prodata:parent="ttMate" prodata:child="ttKonk" prodata:relationFields="inst,inst,rekvnr,rekvnr,MATNR,MATNR"/>
+    </xsd:appinfo>
+  </xsd:annotation>
+</xsd:schema>

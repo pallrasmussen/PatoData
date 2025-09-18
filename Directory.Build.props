@@ -1,0 +1,32 @@
+<Project>
+  <PropertyGroup>
+    <!-- Fast local builds: disable analyzers unless explicitly enabled or in CI -->
+    <!-- Set EnableFullAnalyzers=true (or build with ContinuousIntegrationBuild=true) to turn them back on. -->
+    <EnableFullAnalyzers Condition="'$(EnableFullAnalyzers)' == ''">false</EnableFullAnalyzers>
+    <!-- Respect CI environments (most CI providers set ContinuousIntegrationBuild=true automatically) -->
+    <EnableFullAnalyzers Condition="'$(ContinuousIntegrationBuild)' == 'true'">true</EnableFullAnalyzers>
+
+    <!-- Core analyzer toggles derived from EnableFullAnalyzers -->
+    <EnableNETAnalyzers>$(EnableFullAnalyzers)</EnableNETAnalyzers>
+    <!-- Use a lighter analysis level locally; full latest only when fully enabled -->
+    <AnalysisLevel Condition="'$(EnableFullAnalyzers)' == 'true'">latest</AnalysisLevel>
+    <AnalysisLevel Condition="'$(EnableFullAnalyzers)' != 'true'">latest-minimum</AnalysisLevel>
+
+    <!-- Do not fail the build on warnings by default (can be overridden per task) -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <CodeAnalysisTreatWarningsAsErrors>false</CodeAnalysisTreatWarningsAsErrors>
+
+    <!-- StyleCop still separately opt-in (only meaningful if analyzers enabled) -->
+    <EnableStyleCopAnalyzers Condition="'$(EnableStyleCopAnalyzers)' == ''">false</EnableStyleCopAnalyzers>
+  </PropertyGroup>
+
+  <!-- Analyzer packages (only when full analyzers are enabled) -->
+  <ItemGroup Condition="'$(EnableFullAnalyzers)' == 'true'">
+    <PackageReference Include="Roslynator.Analyzers" Version="4.10.0" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(EnableFullAnalyzers)' == 'true' and '$(EnableStyleCopAnalyzers)' == 'true'">
+    <PackageReference Include="StyleCop.Analyzers" Version="1.2.0-beta.507" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Guidance comment: To run full analyzers locally use: dotnet build -p:EnableFullAnalyzers=true -->
+</Project>
