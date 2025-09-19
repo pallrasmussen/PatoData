@@ -179,21 +179,21 @@ $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if($existing){
     if($ReinstallService){
         Info "Removing existing service $ServiceName"
-        if(-not $DryRun){ sc stop $ServiceName | Out-Null; sc delete $ServiceName | Out-Null }
+        if(-not $DryRun){ sc.exe stop $ServiceName | Out-Null; sc.exe delete $ServiceName | Out-Null }
         $existing = $null
     } else {
         Info "Service exists; updating binary path (stop/start)"
-        if(-not $DryRun){ sc stop $ServiceName | Out-Null }
-        if(-not $DryRun){ sc config $ServiceName binPath= $serviceBin | Out-Null }
+        if(-not $DryRun){ sc.exe stop $ServiceName | Out-Null }
+        if(-not $DryRun){ sc.exe config $ServiceName binPath= $serviceBin | Out-Null }
     }
 }
 if(-not $existing){
     Info "Creating service $ServiceName"
-    if(-not $DryRun){ sc create $ServiceName binPath= $serviceBin start= auto | Out-Null }
+    if(-not $DryRun){ sc.exe create $ServiceName binPath= $serviceBin start= auto | Out-Null }
 }
 if(-not $NoStart){
     Info "Starting service"
-    if(-not $DryRun){ sc start $ServiceName | Out-Null }
+    if(-not $DryRun){ sc.exe start $ServiceName | Out-Null }
 }
 
 # Validation
