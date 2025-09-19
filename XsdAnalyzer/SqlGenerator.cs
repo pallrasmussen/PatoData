@@ -40,10 +40,13 @@ internal class XsdToSqlServer
                 if (c.Name.EndsWith("DATO", StringComparison.OrdinalIgnoreCase) && c.Type.StartsWith("NVARCHAR", StringComparison.OrdinalIgnoreCase))
                 {
                     var compName = c.Name + "_DATE";
-                    var expr =
-                        $"(CASE WHEN {SqlName(c.Name)} IS NOT NULL AND LEN({SqlName(c.Name)}) = 8 AND {SqlName(c.Name)} NOT LIKE '%[^0-9]%' " +
-                        $"THEN DATEFROMPARTS(CONVERT(INT, SUBSTRING({SqlName(c.Name)}, 1, 4)), CONVERT(INT, SUBSTRING({SqlName(c.Name)}, 5, 2)), CONVERT(INT, SUBSTRING({SqlName(c.Name)}, 7, 2)) ) ELSE NULL END)";
+                    var expr = BuildDatoDateCaseExpression(SqlName(c.Name));
                     sb.AppendLine($"ALTER TABLE {QualifiedName(rekv.Schema, rekv.Name)} ADD {SqlName(compName)} AS {expr} PERSISTED;");
+                    // Validity flag (1 = normalized OK, 0 = failed, NULL = original NULL)
+                    var validName = c.Name + "_DATE_VALID";
+                    var colSql = SqlName(c.Name);
+                    // Reuse expr result by inlining it again (cannot reference computed column being added in same statement)
+                    sb.AppendLine($"ALTER TABLE {QualifiedName(rekv.Schema, rekv.Name)} ADD {SqlName(validName)} AS (CASE WHEN {colSql} IS NULL THEN NULL WHEN {expr} IS NOT NULL THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END) PERSISTED;");
                 }
             }
             sb.AppendLine();
@@ -106,6 +109,17 @@ internal class XsdToSqlServer
             sb.AppendLine(RenderCreateOrAlterViewForTable(t, schema));
             sb.AppendLine();
         }
+        // Specialized data quality / normalization report views
+        var rekv = _tables.Values.FirstOrDefault(t => t.Name.Equals("DSETREKV", StringComparison.OrdinalIgnoreCase));
+        if (rekv is not null)
+        {
+            var dqView = TryRenderRekvDateNormalizationIssuesView(rekv, schema);
+            if (!string.IsNullOrEmpty(dqView))
+            {
+                sb.AppendLine(dqView);
+                sb.AppendLine();
+            }
+        }
         // Parent with child counts views
         foreach (var parent in _tables.Values)
         {
@@ -127,12 +141,102 @@ internal class XsdToSqlServer
 
     private static string RenderCreateOrAlterViewForTable(Table t, string schema)
     {
-        var cols = string.Join(", ", t.Columns.Select(c => SqlName(c.Name)));
+        var colList = new List<string>();
+        colList.AddRange(t.Columns.Select(c => SqlName(c.Name)));
+        // Special handling for DSETREKV: add derived DATE columns for each NVARCHAR *DATO string column without removing originals
+        if (t.Name.Equals("DSETREKV", StringComparison.OrdinalIgnoreCase))
+        {
+            // Only add derived DATE projection if a *_DATE column does NOT already exist (table creation may have added persisted computed columns)
+            var existingDateCols = new HashSet<string>(t.Columns.Select(cc => cc.Name), StringComparer.OrdinalIgnoreCase);
+            foreach (var c in t.Columns)
+            {
+                if (c.Name.EndsWith("DATO", StringComparison.OrdinalIgnoreCase) && c.Type.StartsWith("NVARCHAR", StringComparison.OrdinalIgnoreCase))
+                {
+                    var derivedName = c.Name + "_DATE";
+                    if (existingDateCols.Contains(derivedName)) continue; // skip duplicate
+                    var expr = BuildDatoDateCaseExpression(SqlName(c.Name)) + " AS " + SqlName(derivedName);
+                    colList.Add(expr);
+                }
+            }
+        }
+        var cols = string.Join(", ", colList);
         var sb = new StringBuilder();
         sb.AppendLine($"CREATE OR ALTER VIEW {QualifiedName(schema, "vw_" + t.Name)} AS");
         sb.AppendLine($"SELECT {cols} FROM {QualifiedName(schema, t.Name)};");
         sb.AppendLine("GO");
         return sb.ToString();
+    }
+
+    // Report rows where any *DATO normalization failed (original value present but computed DATE column NULL, or validity flag = 0)
+    private static string TryRenderRekvDateNormalizationIssuesView(Table rekv, string schema)
+    {
+        // Gather candidate columns
+        var datoCols = rekv.Columns.Where(c => c.Name.EndsWith("DATO", StringComparison.OrdinalIgnoreCase) && c.Type.StartsWith("NVARCHAR", StringComparison.OrdinalIgnoreCase)).Select(c => c.Name).ToList();
+        if (datoCols.Count == 0) return string.Empty;
+
+        // Determine which supporting columns exist (computed date + validity flag)
+        var existingCols = new HashSet<string>(rekv.Columns.Select(c => c.Name), StringComparer.OrdinalIgnoreCase);
+        var predicates = new List<string>();
+        foreach (var col in datoCols)
+        {
+            var dateCol = col + "_DATE"; // computed date
+            var validCol = col + "_DATE_VALID"; // validity flag
+            bool hasDate = existingCols.Contains(dateCol);
+            bool hasValid = existingCols.Contains(validCol);
+            if (hasValid)
+            {
+                predicates.Add($"({SqlName(validCol)} = 0)");
+            }
+            else if (hasDate)
+            {
+                predicates.Add($"({SqlName(col)} IS NOT NULL AND {SqlName(dateCol)} IS NULL)");
+            }
+            else
+            {
+                // Fallback: recompute expression inline (rare if generator added computed columns earlier)
+                var expr = BuildDatoDateCaseExpression(SqlName(col));
+                predicates.Add($"({SqlName(col)} IS NOT NULL AND {expr} IS NULL)");
+            }
+        }
+        if (predicates.Count == 0) return string.Empty;
+        var whereClause = string.Join(" OR ", predicates);
+
+        var selectCols = new List<string>();
+        // Include identifier and all related normalization columns for inspection
+        selectCols.Add(SqlName(rekv.Name + "Id"));
+        foreach (var col in datoCols)
+        {
+            selectCols.Add(SqlName(col));
+            if (existingCols.Contains(col + "_DATE")) selectCols.Add(SqlName(col + "_DATE"));
+            if (existingCols.Contains(col + "_DATE_VALID")) selectCols.Add(SqlName(col + "_DATE_VALID"));
+        }
+        var colsProjection = string.Join(", ", selectCols);
+        var sb = new StringBuilder();
+        sb.AppendLine($"CREATE OR ALTER VIEW {QualifiedName(schema, "vw_DSETREKV_DateNormalizationIssues")} AS");
+        sb.AppendLine($"SELECT {colsProjection} FROM {QualifiedName(schema, rekv.Name)} WHERE {whereClause};");
+        sb.AppendLine("GO");
+        return sb.ToString();
+    }
+
+    // Build robust conversion of a *DATO NVARCHAR column into a DATE.
+    // Business format clarification: DDMMYYYY (day first) optionally containing separators ('-', '/', '.') which we strip.
+    // We still accept inputs that already appear as DD-MM-YYYY, DD/MM/YYYY, DD.MM.YYYY or compact DDMMYYYY.
+    // Filters out '00000000'. Invalid or impossible dates -> NULL (TRY_CONVERT will return NULL).
+    private static string BuildDatoDateCaseExpression(string colSql)
+    {
+        // Normalize by stripping common separators then validating 8 digits.
+        // We repeat the REPLACE chain inline (SQL Server lacks a short variable for computed column expressions without CROSS APPLY).
+        string norm = $"REPLACE(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM({colSql})), '-', ''), '/', ''), '.', ''), ' ', '')"; // also remove spaces
+        // Safety: ensure 8 digits and not all zeros
+        // Use DATEFROMPARTS for deterministic conversion.
+        var expr =
+            "(CASE " +
+            $"WHEN {colSql} IS NULL THEN NULL " +
+            $"WHEN LEN({norm}) = 8 AND {norm} NOT LIKE '%[^0-9]%' AND {norm} <> '00000000' " +
+            // norm = DDMMYYYY -> year=positions 5-8, month=3-4, day=1-2
+            $"THEN TRY_CONVERT(date, SUBSTRING({norm},5,4)+'-'+SUBSTRING({norm},3,2)+'-'+SUBSTRING({norm},1,2)) " +
+            "ELSE NULL END)";
+        return expr;
     }
 
     private static string RenderCreateOrAlterViewWithCounts(Table parent, List<Table> children, string schema)

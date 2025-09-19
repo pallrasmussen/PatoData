@@ -75,6 +75,9 @@ out/observability.jsonl
 out/observability.stats.json
 out/import_audit.csv
 
+# MSBuild binary logs (should not be committed; use ad-hoc capture only)
+*.binlog
+
 # Local overrides
 scripts/*.local.ps1
 scripts/service.env.local.ps1
