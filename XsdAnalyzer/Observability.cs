@@ -79,6 +79,9 @@ internal static class Observability
         public Dictionary<string,long> PerTable { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public string? LastSuccessAt { get; set; }
         public string? LastFailureAt { get; set; }
+        // Remote polling metrics
+        public int RemoteFilesCopied { get; set; }
+        public string? LastRemoteCopyAt { get; set; }
     }
 
     private static void UpdateStats(bool success, int totalRows, Dictionary<string,int>? byTable)
@@ -123,5 +126,42 @@ internal static class Observability
             }
         }
         catch { /* ignore */ }
+    }
+
+    public static void RecordRemoteCopy(string sourceFile, string destFile)
+    {
+        // Emit an event for remote copy
+        var ev = new
+        {
+            ts = DateTime.UtcNow.ToString("o"),
+            type = "remote-copy",
+            source = sourceFile,
+            dest = destFile
+        };
+        AppendEvent(ev);
+        try
+        {
+            lock (_gate)
+            {
+                var path = _statsPath;
+                if (string.IsNullOrEmpty(path)) return;
+                Stats s;
+                try
+                {
+                    if (File.Exists(path!))
+                    {
+                        var text = File.ReadAllText(path!);
+                        s = JsonSerializer.Deserialize<Stats>(text) ?? new Stats();
+                    }
+                    else s = new Stats();
+                }
+                catch { s = new Stats(); }
+                s.RemoteFilesCopied++;
+                s.LastRemoteCopyAt = DateTime.UtcNow.ToString("o");
+                var json = JsonSerializer.Serialize(s, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(path!, json);
+            }
+        }
+        catch { }
     }
 }

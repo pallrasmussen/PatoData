@@ -264,6 +264,58 @@ Permanent opt-in (expect slower builds): set `<EnableFullAnalyzers>true</EnableF
 
 If builds remain slow even with analyzers disabled, check for antivirus scanning of `obj/` + `bin/` or building on a synced / network path.
 
+## Remote daily file ingestion (UNC polling)
+
+The service can automatically pull a daily XML file (or multiple XMLs) from a remote UNC share (e.g. a hospital export landing zone) and import it without manual copying.
+
+Enable by supplying either CLI flags, environment variables, or config file settings:
+
+CLI flags (add to normal service/watch invocation):
+
+```powershell
+--remote-source-dir \\server\share\Patopost\LPRP --remote-poll-seconds 600
+```
+
+Environment variables:
+
+```powershell
+$env:PATO_REMOTE_SOURCE_DIR="\\\server\share\Patopost\LPRP"
+$env:PATO_REMOTE_POLL_SECONDS="600"   # seconds (default 300, min enforced 30)
+$env:PATO_REMOTE_HISTORY_FILE="C:\\data\\pato\\remote_copied_files.txt"  # optional
+```
+
+`appsettings.json` (optional – lowest precedence after explicit args/env):
+
+```json
+{
+	"RemoteSourceDir": "\\\\server\\share\\Patopost\\LPRP",
+	"RemotePollSeconds": 600,
+	"RemoteHistoryFile": "C:\\data\\pato\\remote_copied_files.txt"
+}
+```
+
+Behavior:
+- Every `RemotePollSeconds` (default 300; minimum 30) the service enumerates `*.xml` in the UNC path.
+- Each previously unseen filename is copied into the local `--import-dir` (collision-safe; timestamp appended if needed) and immediately scheduled for import.
+- Imported source filenames are persisted to a history file (`remote_copied_files.txt` under `--out` by default) so restarts avoid re-copying.
+- Copy + import events are logged in `out/import.log` (look for `Copied remote XML ...`).
+
+Operational notes:
+- Ensure the Windows service account has READ access to the UNC path and WRITE access to the local import + out directories.
+- Large files: the importer waits (`--ready-wait-ms`) before processing local files; remote copies rely on atomic completion of `File.Copy`. If source system writes via temp + move (recommended), partial reads are avoided.
+- To force a re-import of a remote file, delete its line from the history file and remove any previously imported version from `xml/imported` (idempotency logic may still bypass duplicates if unchanged data already exists).
+- History file can be relocated with `PATO_REMOTE_HISTORY_FILE` or `--remote-history-file` (if later added); current implementation supports env/config for path override.
+
+Security tip:
+- Prefer a least-privilege domain service account mapped to SQL and granted only read rights on the share.
+
+Troubleshooting remote polling:
+- No copies happening: confirm `RemoteSourceDir` logged in the startup line inside `import.log`.
+- Poll interval confusion: verify the effective interval (min 30s) by searching log for successive `Copied remote XML` timestamps.
+- Duplicate prevention: open the history file and confirm each source filename exists once.
+
+Future enhancements (roadmap): retries/backoff on transient network errors, file readiness probe on UNC before copy, observability counters for `remote_files_copied_total`.
+
 ## Notes
 - Replace `xsd/sample.xsd` with your actual schema.
 - Uses `xmlschema` for validation and `lxml` for XML generation.

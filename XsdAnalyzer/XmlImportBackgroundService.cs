@@ -86,6 +86,9 @@ internal sealed class XmlImportBackgroundService : BackgroundService
 
             bool importing = false;
             object gate = new object();
+            // Track remote copy in progress separately
+            bool remoteCopying = false;
+            object remoteGate = new object();
             void ImportBatch()
             {
                 lock (gate)
@@ -139,6 +142,82 @@ internal sealed class XmlImportBackgroundService : BackgroundService
             // initial run
             ImportBatch();
 
+            // Remote source polling: copy new XMLs from a UNC path (if configured)
+            HashSet<string>? remoteSeen = null;
+            string? remoteHistoryPath = null;
+            if (!string.IsNullOrWhiteSpace(_opts.RemoteSourceDir))
+            {
+                try
+                {
+                    Directory.CreateDirectory(_opts.ImportDir);
+                    remoteHistoryPath = _opts.RemoteHistoryFile ?? Path.Combine(_opts.OutDir, "remote_copied_files.txt");
+                    remoteSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    if (File.Exists(remoteHistoryPath))
+                    {
+                        foreach (var line in File.ReadAllLines(remoteHistoryPath))
+                        {
+                            var trimmed = line.Trim();
+                            if (trimmed.Length > 0) remoteSeen.Add(trimmed);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed initializing remote source tracking");
+                }
+            }
+
+            void PollRemote()
+            {
+                if (string.IsNullOrWhiteSpace(_opts.RemoteSourceDir) || remoteSeen is null) return;
+                lock (remoteGate)
+                {
+                    if (remoteCopying) return; // prevent overlapping polls
+                    remoteCopying = true;
+                }
+                try
+                {
+                    string srcDir = _opts.RemoteSourceDir!;
+                    if (!Directory.Exists(srcDir)) return;
+                    var remoteFiles = Directory.EnumerateFiles(srcDir, "*.xml", SearchOption.TopDirectoryOnly).OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
+                    foreach (var rf in remoteFiles)
+                    {
+                        if (remoteSeen.Contains(Path.GetFileName(rf))) continue;
+                        try
+                        {
+                            // Basic daily guarantee: remote is expected to drop 1 file ~08:00; still copy robustly any missing.
+                            var dest = Path.Combine(_opts.ImportDir, Path.GetFileName(rf));
+                            // Avoid overwriting an in-progress import; if name collision, append timestamp
+                            if (File.Exists(dest))
+                            {
+                                var alt = Path.Combine(_opts.ImportDir, Path.GetFileNameWithoutExtension(dest) + "_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + Path.GetExtension(dest));
+                                dest = alt;
+                            }
+                            File.Copy(rf, dest, overwrite: false);
+                            remoteSeen.Add(Path.GetFileName(rf));
+                            try
+                            {
+                                if (!string.IsNullOrWhiteSpace(remoteHistoryPath))
+                                    File.AppendAllText(remoteHistoryPath, Path.GetFileName(rf) + Environment.NewLine);
+                            }
+                            catch { }
+                            _logger.LogInformation("Copied remote XML {RemoteFile} -> {Local}", rf, dest);
+                            try { Observability.RecordRemoteCopy(rf, dest); } catch { }
+                            // Schedule import after copy (debounced watcher will also catch create, but we call directly for immediacy)
+                            ImportBatch();
+                        }
+                        catch (Exception copyEx)
+                        {
+                            _logger.LogError(copyEx, "Failed copying remote file {RemoteFile}", rf);
+                        }
+                    }
+                }
+                finally
+                {
+                    lock (remoteGate) { remoteCopying = false; }
+                }
+            }
+
             using var watcher = new FileSystemWatcher(_opts.ImportDir, "*.xml") { IncludeSubdirectories = false, EnableRaisingEvents = true };
             System.Threading.Timer? debounceTimer = null;
             void ScheduleImport()
@@ -161,8 +240,15 @@ internal sealed class XmlImportBackgroundService : BackgroundService
             // Keep alive
             try
             {
+                var remotePoll = Math.Max(30, _opts.RemotePollSeconds); // enforce sane minimum
+                var lastRemote = DateTime.MinValue;
                 while (!stoppingToken.IsCancellationRequested)
                 {
+                    if (!string.IsNullOrWhiteSpace(_opts.RemoteSourceDir) && (DateTime.UtcNow - lastRemote).TotalSeconds >= remotePoll)
+                    {
+                        lastRemote = DateTime.UtcNow;
+                        try { PollRemote(); } catch { }
+                    }
                     await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
                 }
             }

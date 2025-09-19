@@ -16,6 +16,10 @@ internal sealed class AppConfig
     public int? ReadyWaitMs { get; set; }
     public bool? IdempotencyEnabled { get; set; }
     public string? ServiceName { get; set; }
+    // Remote polling (UNC) configuration
+    public string? RemoteSourceDir { get; set; }
+    public int? RemotePollSeconds { get; set; }
+    public string? RemoteHistoryFile { get; set; }
 
     public static AppConfig? Load(string path)
     {

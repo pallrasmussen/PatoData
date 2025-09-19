@@ -32,13 +32,14 @@ catch (Exception ex)
 static int PrintUsage()
 {
     Console.WriteLine("Usage: XsdAnalyzer --xsd <path> [--out <dir>]");
-    Console.WriteLine("       XsdAnalyzer --service --xsd <path> --out <dir> --schema <name> --import-dir <folder> --connection <conn> [--verbose-import] [--audit] [--debounce-ms <int>] [--ready-wait-ms <int>] [--no-idempotency]");
-    Console.WriteLine("       XsdAnalyzer --xsd <path> --out <dir> --schema <name> --import-dir <folder> --connection <conn> [--watch] [--verbose-import] [--audit] [--debounce-ms <int>] [--ready-wait-ms <int>] [--no-idempotency]");
+    Console.WriteLine("       XsdAnalyzer --service --xsd <path> --out <dir> --schema <name> --import-dir <folder> --connection <conn> [--remote-source-dir <UNC>] [--remote-poll-seconds <int>] [--verbose-import] [--audit] [--debounce-ms <int>] [--ready-wait-ms <int>] [--no-idempotency]");
+    Console.WriteLine("       XsdAnalyzer --xsd <path> --out <dir> --schema <name> --import-dir <folder> --connection <conn> [--remote-source-dir <UNC>] [--remote-poll-seconds <int>] [--watch] [--verbose-import] [--audit] [--debounce-ms <int>] [--ready-wait-ms <int>] [--no-idempotency]");
     Console.WriteLine();
     Console.WriteLine("Environment variables (fallbacks when args not provided):");
     Console.WriteLine("  PATO_XSD, PATO_OUT, PATO_SCHEMA, PATO_IMPORT_DIR, PATO_CONNECTION");
     Console.WriteLine("  PATO_WATCH=1|0, PATO_VERBOSE_IMPORT=1|0, PATO_AUDIT=1|0");
     Console.WriteLine("  PATO_DEBOUNCE_MS, PATO_READY_WAIT_MS, PATO_IDEMPOTENCY_ENABLED=1|0");
+    Console.WriteLine("  PATO_REMOTE_SOURCE_DIR, PATO_REMOTE_POLL_SECONDS, PATO_REMOTE_HISTORY_FILE");
     return 1;
 }
 
@@ -57,6 +58,9 @@ int readyWaitMs = 2000;
 bool idempotencyEnabled = true;
 string? serviceNameOverride = null;
 string? configPath = null;
+string? remoteSourceDir = null;
+int remotePollSeconds = 300; // default 5 minutes
+string? remoteHistoryFile = null;
 
 for (int i = 0; i < args.Length; i++)
 {
@@ -83,6 +87,14 @@ for (int i = 0; i < args.Length; i++)
     else if (args[i] == "--no-idempotency")
     {
         idempotencyEnabled = false;
+    }
+    else if (args[i] == "--remote-source-dir" && i + 1 < args.Length)
+    {
+        remoteSourceDir = args[++i];
+    }
+    else if (args[i] == "--remote-poll-seconds" && i + 1 < args.Length)
+    {
+        if (int.TryParse(args[++i], out var v) && v > 0) remotePollSeconds = v;
     }
 }
 
@@ -119,6 +131,9 @@ if (!string.IsNullOrWhiteSpace(idemEnv))
     idempotencyEnabled = idemEnv.Equals("1") || idemEnv.Equals("true", StringComparison.OrdinalIgnoreCase) || idemEnv.Equals("yes", StringComparison.OrdinalIgnoreCase);
 }
 var svcEnv = Env("PATO_SERVICE_NAME"); if (string.IsNullOrWhiteSpace(serviceNameOverride) && !string.IsNullOrWhiteSpace(svcEnv)) serviceNameOverride = svcEnv;
+if (string.IsNullOrWhiteSpace(remoteSourceDir)) remoteSourceDir = Env("PATO_REMOTE_SOURCE_DIR") ?? remoteSourceDir;
+var rpsEnv = EnvInt("PATO_REMOTE_POLL_SECONDS"); if (rpsEnv.HasValue && remotePollSeconds == 300) remotePollSeconds = Math.Max(1, rpsEnv.Value);
+if (string.IsNullOrWhiteSpace(remoteHistoryFile)) remoteHistoryFile = Env("PATO_REMOTE_HISTORY_FILE") ?? remoteHistoryFile;
 
 // Config file (lowest precedence, but before hard-coded defaults)
 AppConfig? cfg = null;
@@ -147,6 +162,9 @@ if (cfg is not null)
     if (readyWaitMs == 2000 && cfg.ReadyWaitMs.HasValue) readyWaitMs = Math.Max(0, cfg.ReadyWaitMs.Value);
     if (cfg.IdempotencyEnabled.HasValue) idempotencyEnabled = cfg.IdempotencyEnabled.Value;
     serviceNameOverride ??= cfg.ServiceName;
+    remoteSourceDir ??= cfg.RemoteSourceDir;
+    if (remotePollSeconds == 300 && cfg.RemotePollSeconds.HasValue) remotePollSeconds = Math.Max(1, cfg.RemotePollSeconds.Value);
+    remoteHistoryFile ??= cfg.RemoteHistoryFile;
 }
 
 var output = Path.GetFullPath(outDir);
@@ -205,7 +223,10 @@ if (runAsService)
                 Audit = audit,
                 DebounceMs = debounceMs,
                 ReadyWaitMs = readyWaitMs,
-                IdempotencyEnabled = idempotencyEnabled
+                IdempotencyEnabled = idempotencyEnabled,
+                RemoteSourceDir = remoteSourceDir,
+                RemotePollSeconds = remotePollSeconds,
+                RemoteHistoryFile = remoteHistoryFile
             };
             svc.AddSingleton(opts);
             svc.AddHostedService<XsdAnalyzer.XmlImportBackgroundService>();
