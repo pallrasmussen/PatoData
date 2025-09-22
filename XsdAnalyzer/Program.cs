@@ -487,8 +487,157 @@ try
                 watcher.Created += h;
                 RenamedEventHandler hr = (s, e) => { ScheduleImport(); };
                 watcher.Renamed += hr;
-                // Keep process alive
-                await Task.Delay(Timeout.InfiniteTimeSpan);
+                // Remote polling (CLI parity)
+                HashSet<string>? remoteSeen = null;
+                string? historyPath = null;
+                if (!string.IsNullOrWhiteSpace(remoteSourceDir))
+                {
+                    try
+                    {
+                        historyPath = remoteHistoryFile ?? Path.Combine(output, "remote_copied_files.txt");
+                        remoteSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        if (File.Exists(historyPath))
+                        {
+                            foreach (var line in File.ReadAllLines(historyPath))
+                            {
+                                var t = line.Trim(); if (t.Length > 0) remoteSeen.Add(t);
+                            }
+                        }
+                        // Seed with existing local XMLs (in, imported, error)
+                        try
+                        {
+                            int seeded = 0;
+                            var importedDirLocal = importedDir;
+                            var errorDirLocal = Path.Combine(Path.GetDirectoryName(inDir) ?? inDir, "error");
+                            foreach (var d in new[] { inDir, importedDirLocal, errorDirLocal })
+                            {
+                                if (!Directory.Exists(d)) continue;
+                                foreach (var f in Directory.EnumerateFiles(d, "*.xml", SearchOption.TopDirectoryOnly))
+                                {
+                                    if (remoteSeen.Add(Path.GetFileName(f))) seeded++;
+                                }
+                            }
+                            if (seeded > 0)
+                            {
+                                var seedMsg = $"[remote] Seeded history with {seeded} existing local file(s)";
+                                Console.WriteLine(seedMsg);
+                                LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + seedMsg);
+                            }
+                        }
+                        catch { }
+                        var currentUser = System.Security.Principal.WindowsIdentity.GetCurrent()?.Name ?? Environment.UserName;
+                        var poll = Math.Max(30, remotePollSeconds);
+                        string status = Directory.Exists(remoteSourceDir)
+                            ? $"[remote] Status: watching {remoteSourceDir}; poll {poll}s; history={historyPath}; user={currentUser}"
+                            : $"[remote] Status: directory not found {remoteSourceDir}; will retry; user={currentUser}";
+                        Console.WriteLine(status);
+                        LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + status);
+                        // Backlog copy
+                        if (Directory.Exists(remoteSourceDir))
+                        {
+                            var backlog = Directory.EnumerateFiles(remoteSourceDir, "*.xml", SearchOption.TopDirectoryOnly).OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
+                            int copied = 0;
+                            foreach (var rf in backlog)
+                            {
+                                var name = Path.GetFileName(rf);
+                                if (remoteSeen.Contains(name)) continue;
+                                try
+                                {
+                                    var dest = Path.Combine(inDir, name);
+                                    if (File.Exists(dest))
+                                    {
+                                        dest = Path.Combine(inDir, Path.GetFileNameWithoutExtension(dest) + "_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + Path.GetExtension(dest));
+                                    }
+                                    File.Copy(rf, dest, overwrite: false);
+                                    remoteSeen.Add(name);
+                                    if (!string.IsNullOrWhiteSpace(historyPath))
+                                    {
+                                        try { File.AppendAllText(historyPath, name + Environment.NewLine); } catch { }
+                                    }
+                                    var msg = $"[remote] Backlog copied {rf} -> {dest}";
+                                    Console.WriteLine(msg);
+                                    LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + msg);
+                                    copied++;
+                                }
+                                catch (Exception bEx)
+                                {
+                                    var w = $"[remote] Failed backlog copy {rf}: {bEx.Message}";
+                                    Console.WriteLine(w);
+                                    LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + w);
+                                }
+                            }
+                            var backlogSummary = copied > 0 ? $"[remote] Backlog copied {copied} file(s)" : "[remote] No backlog files to copy (0 new)";
+                            Console.WriteLine(backlogSummary);
+                            LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + backlogSummary);
+                            if (copied > 0) importBatch();
+                        }
+                    }
+                    catch (Exception rex)
+                    {
+                        var initErr = $"[remote] Init error: {rex.Message}";
+                        Console.WriteLine(initErr);
+                        LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + initErr);
+                    }
+                }
+                object remoteGate = new object();
+                bool remoteBusy = false;
+                void PollRemote()
+                {
+                    if (remoteSeen is null || string.IsNullOrWhiteSpace(remoteSourceDir)) return;
+                    lock (remoteGate)
+                    {
+                        if (remoteBusy) return; remoteBusy = true;
+                    }
+                    try
+                    {
+                        if (!Directory.Exists(remoteSourceDir)) return;
+                        var rfiles = Directory.EnumerateFiles(remoteSourceDir, "*.xml", SearchOption.TopDirectoryOnly).OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
+                        foreach (var rf in rfiles)
+                        {
+                            var name = Path.GetFileName(rf);
+                            if (remoteSeen.Contains(name)) continue;
+                            try
+                            {
+                                var dest = Path.Combine(inDir, name);
+                                if (File.Exists(dest))
+                                {
+                                    dest = Path.Combine(inDir, Path.GetFileNameWithoutExtension(dest) + "_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + Path.GetExtension(dest));
+                                }
+                                File.Copy(rf, dest, overwrite: false);
+                                remoteSeen.Add(name);
+                                if (!string.IsNullOrWhiteSpace(historyPath))
+                                {
+                                    try { File.AppendAllText(historyPath, name + Environment.NewLine); } catch { }
+                                }
+                                var msg = $"Copied remote XML {rf} -> {dest}";
+                                Console.WriteLine(msg);
+                                LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + msg);
+                                importBatch();
+                            }
+                            catch (Exception pex)
+                            {
+                                var emsg = $"Failed copying remote file {rf}: {pex.Message}";
+                                Console.WriteLine(emsg);
+                                LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + emsg);
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        lock (remoteGate) { remoteBusy = false; }
+                    }
+                }
+                var remoteInterval = Math.Max(30, remotePollSeconds);
+                DateTime lastRemote = DateTime.MinValue;
+                while (true)
+                {
+                    if (remoteSeen is not null && (DateTime.UtcNow - lastRemote).TotalSeconds >= remoteInterval)
+                    {
+                        lastRemote = DateTime.UtcNow;
+                        try { PollRemote(); } catch { }
+                    }
+                    await Task.Delay(1000);
+                }
             }
         }
     }

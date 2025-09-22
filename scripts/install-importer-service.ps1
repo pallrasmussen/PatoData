@@ -31,6 +31,11 @@ param(
   [switch]$VerboseImport,
   [switch]$Audit,
 
+  # Remote polling (UNC) options (optional)
+  [string]$RemoteSourceDir,
+  [int]$RemotePollSeconds = 300,
+  [string]$RemoteHistoryFile,
+
   # Publish settings
   [bool]$Publish = $true,
   [string]$Project = (Join-Path $PSScriptRoot '..\XsdAnalyzer\XsdAnalyzer.csproj'),
@@ -173,6 +178,13 @@ if (-not (Test-Path $ImportDir)) { New-Item -ItemType Directory -Path $ImportDir
 
 # Generate config in publish directory to unify service/CLI configuration
 $configPath = Join-Path (Resolve-FullPath $PublishDir) 'appsettings.json'
+$existingCfg = $null
+if (Test-Path $configPath) {
+  try {
+    $existingRaw = Get-Content -LiteralPath $configPath -Raw -ErrorAction Stop
+    if ($existingRaw.Trim().StartsWith('{')) { $existingCfg = $existingRaw | ConvertFrom-Json -ErrorAction Stop }
+  } catch { $existingCfg = $null }
+}
 $cfg = [ordered]@{
   Xsd = $XsdPath
   OutDir = $OutDir
@@ -186,6 +198,24 @@ $cfg = [ordered]@{
   ReadyWaitMs = 2000
   IdempotencyEnabled = $true
   ServiceName = $ServiceName
+}
+
+# Inject remote settings only if provided to keep config clean
+# If user passed new remote params, override; otherwise preserve from existing file
+if ($RemoteSourceDir) {
+  $cfg.RemoteSourceDir = $RemoteSourceDir
+} elseif ($existingCfg -and $existingCfg.PSObject.Properties.Name -contains 'RemoteSourceDir') {
+  $cfg.RemoteSourceDir = $existingCfg.RemoteSourceDir
+}
+if ($PSBoundParameters.ContainsKey('RemotePollSeconds')) {
+  $cfg.RemotePollSeconds = $RemotePollSeconds
+} elseif ($existingCfg -and $existingCfg.PSObject.Properties.Name -contains 'RemotePollSeconds') {
+  $cfg.RemotePollSeconds = [int]$existingCfg.RemotePollSeconds
+}
+if ($RemoteHistoryFile) {
+  $cfg.RemoteHistoryFile = $RemoteHistoryFile
+} elseif ($existingCfg -and $existingCfg.PSObject.Properties.Name -contains 'RemoteHistoryFile') {
+  $cfg.RemoteHistoryFile = $existingCfg.RemoteHistoryFile
 }
 $cfg | ConvertTo-Json -Depth 5 | Out-File -FilePath $configPath -Encoding UTF8 -Force
 

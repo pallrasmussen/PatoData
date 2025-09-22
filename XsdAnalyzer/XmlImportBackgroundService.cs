@@ -145,10 +145,22 @@ internal sealed class XmlImportBackgroundService : BackgroundService
             // Remote source polling: copy new XMLs from a UNC path (if configured)
             HashSet<string>? remoteSeen = null;
             string? remoteHistoryPath = null;
-            if (!string.IsNullOrWhiteSpace(_opts.RemoteSourceDir))
+            if (string.IsNullOrWhiteSpace(_opts.RemoteSourceDir))
+            {
+                // Explicit disabled log for clarity
+                try
+                {
+                    var disabledMsg = "[remote] Disabled (no RemoteSourceDir configured)";
+                    _logger.LogInformation(disabledMsg);
+                    LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + disabledMsg);
+                }
+                catch { }
+            }
+            else
             {
                 try
                 {
+                    var currentUser = System.Security.Principal.WindowsIdentity.GetCurrent()?.Name ?? Environment.UserName;
                     Directory.CreateDirectory(_opts.ImportDir);
                     remoteHistoryPath = _opts.RemoteHistoryFile ?? Path.Combine(_opts.OutDir, "remote_copied_files.txt");
                     remoteSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -156,9 +168,87 @@ internal sealed class XmlImportBackgroundService : BackgroundService
                     {
                         foreach (var line in File.ReadAllLines(remoteHistoryPath))
                         {
-                            var trimmed = line.Trim();
-                            if (trimmed.Length > 0) remoteSeen.Add(trimmed);
+                            var trimmed = line.Trim(); if (trimmed.Length > 0) remoteSeen.Add(trimmed);
                         }
+                    }
+                    // Seed with any local XMLs (import queue, imported, error) to avoid duplicate copy/import if history missing
+                    try
+                    {
+                        int seeded = 0;
+                        foreach (var sd in new[] { _opts.ImportDir, importedDir, errorDir })
+                        {
+                            if (!Directory.Exists(sd)) continue;
+                            foreach (var f in Directory.EnumerateFiles(sd, "*.xml", SearchOption.TopDirectoryOnly))
+                            {
+                                if (remoteSeen.Add(Path.GetFileName(f))) seeded++;
+                            }
+                        }
+                        if (seeded > 0)
+                        {
+                            var seedMsg = $"[remote] Seeded history with {seeded} existing local file(s)";
+                            _logger.LogInformation(seedMsg);
+                            LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + seedMsg);
+                        }
+                    }
+                    catch { }
+
+                    // Status banner
+                    try
+                    {
+                        var poll = Math.Max(30, _opts.RemotePollSeconds);
+                        if (Directory.Exists(_opts.RemoteSourceDir))
+                        {
+                            var status = $"[remote] Status: watching {_opts.RemoteSourceDir}; poll {poll}s; history={remoteHistoryPath}; user={currentUser}";
+                            _logger.LogInformation(status);
+                            LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + status);
+                        }
+                        else
+                        {
+                            var status = $"[remote] Status: directory not found {_opts.RemoteSourceDir}; will retry; user={currentUser}";
+                            _logger.LogInformation(status);
+                            LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + status);
+                        }
+                    }
+                    catch { }
+
+                    // Backlog copy (only if directory exists)
+                    if (Directory.Exists(_opts.RemoteSourceDir))
+                    {
+                        var backlog = Directory.EnumerateFiles(_opts.RemoteSourceDir, "*.xml", SearchOption.TopDirectoryOnly)
+                            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
+                        int copied = 0;
+                        foreach (var rf in backlog)
+                        {
+                            var name = Path.GetFileName(rf);
+                            if (remoteSeen.Contains(name)) continue;
+                            try
+                            {
+                                var dest = Path.Combine(_opts.ImportDir, name);
+                                if (File.Exists(dest))
+                                {
+                                    dest = Path.Combine(_opts.ImportDir, Path.GetFileNameWithoutExtension(dest) + "_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + Path.GetExtension(dest));
+                                }
+                                File.Copy(rf, dest, overwrite: false);
+                                remoteSeen.Add(name);
+                                if (!string.IsNullOrWhiteSpace(remoteHistoryPath))
+                                {
+                                    try { File.AppendAllText(remoteHistoryPath, name + Environment.NewLine); } catch { }
+                                }
+                                var msg = $"[remote] Backlog copied {rf} -> {dest}";
+                                _logger.LogInformation(msg);
+                                LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + msg);
+                                try { Observability.RecordRemoteCopy(rf, dest); } catch { }
+                                copied++;
+                            }
+                            catch (Exception bEx)
+                            {
+                                _logger.LogWarning(bEx, "[remote] Failed backlog copy {RemoteFile}", rf);
+                            }
+                        }
+                        var summary = copied > 0 ? $"[remote] Backlog copied {copied} file(s)" : "[remote] No backlog files to copy (0 new)";
+                        _logger.LogInformation(summary);
+                        LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + summary);
+                        if (copied > 0) ImportBatch();
                     }
                 }
                 catch (Exception ex)

@@ -111,6 +111,27 @@ Helper scripts:
 
 Parameters include `-ServiceName`, `-DisplayName`, `-XsdPath`, `-OutDir`, `-Schema`, `-ImportDir`, `-VerboseImport`, `-Audit`, and publishing controls (`-PublishDir`, `-Runtime`, `-SelfContained`, `-SingleFile`).
 
+Remote polling parameters now supported directly on the installer script:
+
+````powershell
+.\scriptsuild-and-install-importer-service.ps1 `
+	-Connection "Server=.;Database=PatoData;Trusted_Connection=True;TrustServerCertificate=True" `
+	-RemoteSourceDir \\server\share\Patopost\LPRP `
+	-RemotePollSeconds 600 `
+	-RemoteHistoryFile C:\data\pato\remote_copied_files.txt `
+	-ImportDir .\xml\in `
+	-OutDir .\out `
+	-XsdPath .\161219-161219.XSD `
+	-ServiceName PatoDataXmlImporter `
+	-DisplayName "PatoData XML Importer" `
+	-Account "DOMAIN\\svc_pato" `
+	-Start -Force
+````
+
+If `-RemoteSourceDir` is omitted, remote ingestion is disabled and the service logs `[remote] Disabled` (or a not-found status if a path was specified but is unreachable).
+
+Generated `appsettings.json` in the publish folder will include only provided remote keys; you can later edit and restart service to change them. To remove remote polling, delete those keys and restart (history file can be left intact for future reactivation).
+
 - Reinstall and verify flags (no `--verbose-import`, no `--audit`):
 
 	```powershell
