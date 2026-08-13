@@ -11,9 +11,15 @@ authors = [{name = "Your Name"}]
 requires-python = ">=3.10"
 dependencies = [
     "xmlschema==3.3.1",
-    "lxml==5.2.2",
+    "lxml==5.4.0",
     "rich==13.7.1",
 ]
+
+[project.scripts]
+patodata-xsd-analyze = "src.analyze_xsd:main"
+
+[tool.setuptools]
+packages = ["src"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

@@ -8,17 +8,20 @@ A lightweight Python workspace to analyze XML Schema (XSD) files: summarize stru
 - Generate a minimal example XML instance
 
 ## Quick start (Python)
-1. Create a virtual environment and install dependencies.
+1. Create a virtual environment and install the project in editable mode.
 2. Run the analyzer with an XSD path.
 
 ```powershell
 # From repo root
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+python -m pip install -e .
 
 # Analyze an XSD and write outputs to out/
-python -m src.analyze_xsd --xsd .\xsd\sample.xsd --out .\out
+patodata-xsd-analyze --xsd .\xsd\sample.xsd --out .\out
+# or, without installing the console command:
+python -m src --xsd .\xsd\sample.xsd --out .\out
 ```
 
 Outputs:
