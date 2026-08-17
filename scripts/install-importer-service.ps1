@@ -166,6 +166,12 @@ $exePath = Join-Path (Resolve-FullPath $PublishDir) 'XsdAnalyzer.exe'
 if (-not (Test-Path $exePath)) {
   throw "Executable not found at '$exePath'. Ensure publish succeeded or set -PublishDir to a valid location."
 }
+if (-not $SelfContained) {
+  $runtimeConfigPath = Join-Path (Resolve-FullPath $PublishDir) 'XsdAnalyzer.runtimeconfig.json'
+  if (-not (Test-Path $runtimeConfigPath)) {
+    throw "Framework-dependent publish is incomplete: '$runtimeConfigPath' was not found. Republish the application before installing the service."
+  }
+}
 
 # 2) Compose service binPath
 foreach ($d in @('XsdPath','OutDir','ImportDir')) {
@@ -176,8 +182,9 @@ if (-not (Test-Path $XsdPath)) { throw "XSD path not found: $XsdPath" }
 if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Path $OutDir | Out-Null }
 if (-not (Test-Path $ImportDir)) { New-Item -ItemType Directory -Path $ImportDir | Out-Null }
 
-# Generate config in publish directory to unify service/CLI configuration
-$configPath = Join-Path (Resolve-FullPath $PublishDir) 'appsettings.json'
+# Keep service configuration outside the publish directory so dotnet publish cannot remove it.
+$publishRoot = Split-Path -Parent (Resolve-FullPath $PublishDir)
+$configPath = Join-Path $publishRoot 'XsdAnalyzer.appsettings.json'
 $existingCfg = $null
 if (Test-Path $configPath) {
   try {
@@ -218,6 +225,16 @@ if ($RemoteHistoryFile) {
   $cfg.RemoteHistoryFile = $existingCfg.RemoteHistoryFile
 }
 $cfg | ConvertTo-Json -Depth 5 | Out-File -FilePath $configPath -Encoding UTF8 -Force
+if (-not (Test-Path $configPath)) {
+  throw "Failed to create service configuration at '$configPath'."
+}
+$writtenCfg = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -ErrorAction Stop
+foreach ($requiredSetting in @('Xsd','OutDir','ImportDir','Connection','ServiceName')) {
+  $requiredValue = $writtenCfg.$requiredSetting
+  if ($null -eq $requiredValue -or [string]::IsNullOrWhiteSpace([string]$requiredValue)) {
+    throw "Service configuration '$configPath' is missing required setting '$requiredSetting'."
+  }
+}
 
 # Minimal args: point to config and ensure service name alignment
 $argsList = @('--service','--config', $configPath, '--service-name', $ServiceName)

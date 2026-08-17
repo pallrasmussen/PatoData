@@ -133,7 +133,7 @@ Remote polling parameters now supported directly on the installer script:
 
 If `-RemoteSourceDir` is omitted, remote ingestion is disabled and the service logs `[remote] Disabled` (or a not-found status if a path was specified but is unreachable).
 
-Generated `appsettings.json` in the publish folder will include only provided remote keys; you can later edit and restart service to change them. To remove remote polling, delete those keys and restart (history file can be left intact for future reactivation).
+Generated `publish/XsdAnalyzer.appsettings.json` will include only provided remote keys and is kept outside the application publish folder so republishing cannot delete it. You can later edit and restart the service to change these settings. To remove remote polling, delete those keys and restart (the history file can be left intact for future reactivation).
 
 - Reinstall and verify flags (no `--verbose-import`, no `--audit`):
 
