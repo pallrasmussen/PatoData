@@ -80,5 +80,6 @@ out/import_audit.csv
 *.binlog
 
 # Local overrides
+appsettings.json
 scripts/*.local.ps1
 scripts/service.env.local.ps1

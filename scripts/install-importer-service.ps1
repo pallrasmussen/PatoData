@@ -16,7 +16,7 @@
   Requires PowerShell 5.1+ and .NET SDK for publishing. Run from any location; defaults assume repo layout.
 #>
 
-[CmdletBinding(SupportsShouldProcess=$true)]
+[CmdletBinding()]
 param(
   [string]$ServiceName = 'PatoDataXmlImporter',
   [string]$DisplayName = 'PatoData XML Importer',
@@ -56,6 +56,7 @@ param(
 
 set-strictmode -version latest
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'ServiceDeployment.psm1') -Force
 
 # If a PSCredential is provided, prefer it for account/password
 if ($Credential) {
@@ -122,6 +123,20 @@ function Test-ServiceExists([string]$name) {
   if ($LASTEXITCODE -eq 0) { return $true } else { return $false }
 }
 
+function Set-ServiceLogonAccount([string]$name, [string]$account, [string]$plainPassword) {
+  if ([string]::IsNullOrWhiteSpace($account)) { return }
+
+  $service = Get-CimInstance Win32_Service -Filter "Name='$name'" -ErrorAction Stop
+  $arguments = @{ StartName = $account }
+  if (-not [string]::IsNullOrEmpty($plainPassword)) {
+    $arguments.StartPassword = $plainPassword
+  }
+  $result = Invoke-CimMethod -InputObject $service -MethodName Change -Arguments $arguments -ErrorAction Stop
+  if ($result.ReturnValue -ne 0) {
+    throw "Failed to configure service account '$account' for '$name' (Win32_Service.Change returned $($result.ReturnValue))."
+  }
+}
+
 # Wait for the service to reach a specific status (best-effort)
 function Wait-ServiceStatus([string]$name, [string]$status, [int]$timeoutSeconds = 30) {
   try {
@@ -130,21 +145,12 @@ function Wait-ServiceStatus([string]$name, [string]$status, [int]$timeoutSeconds
   } catch { }
 }
 
-# Wait until the service is fully removed from SCM. Polls sc.exe query until not found.
-function Wait-ServiceDeletion([string]$name, [int]$timeoutSeconds = 30) {
-  $deadline = (Get-Date).AddSeconds($timeoutSeconds)
-  while ((Get-Date) -lt $deadline) {
-    sc.exe query $name | Out-Null
-    if ($LASTEXITCODE -ne 0) { return $true } # 1060 or similar => gone
-    Start-Sleep -Milliseconds 500
-  }
-  return $false
-}
 # Normalize account and prepare password
 $objName = $null
 $pwdPlain = $null
-if ($Account -and $Account -ne 'LocalSystem') {
+if ($Account) {
   switch ($Account) {
+    'LocalSystem'    { $objName = 'LocalSystem' }
     'LocalService'   { $objName = 'NT AUTHORITY\LocalService' }
     'NetworkService' { $objName = 'NT AUTHORITY\NetworkService' }
     Default          { $objName = $Account }
@@ -196,14 +202,7 @@ if ($Publish) {
   & dotnet @publishArgs
   if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
 
-  $stagedExePath = Join-Path $stagingDir 'XsdAnalyzer.exe'
-  if (-not (Test-Path $stagedExePath)) { throw "Staged executable not found at '$stagedExePath'." }
-  if (-not $SelfContained -and -not $SingleFile) {
-    $stagedRuntimeConfigPath = Join-Path $stagingDir 'XsdAnalyzer.runtimeconfig.json'
-    if (-not (Test-Path $stagedRuntimeConfigPath)) {
-      throw "Framework-dependent publish is incomplete: '$stagedRuntimeConfigPath' was not found."
-    }
-  }
+  $stagedExePath = Assert-PublishLayout -PublishDir $stagingDir -SelfContained $SelfContained -SingleFile $SingleFile
 
   & $stagedExePath --help | Out-Null
   if ($LASTEXITCODE -ne 0) { throw "Staged executable smoke test failed with exit code $LASTEXITCODE." }
@@ -229,16 +228,7 @@ if ($Publish) {
   }
 }
 
-$exePath = Join-Path $pubDir 'XsdAnalyzer.exe'
-if (-not (Test-Path $exePath)) {
-  throw "Executable not found at '$exePath'. Ensure publish succeeded or set -PublishDir to a valid location."
-}
-if (-not $SelfContained -and -not $SingleFile) {
-  $runtimeConfigPath = Join-Path $pubDir 'XsdAnalyzer.runtimeconfig.json'
-  if (-not (Test-Path $runtimeConfigPath)) {
-    throw "Framework-dependent publish is incomplete: '$runtimeConfigPath' was not found. Republish the application before installing the service."
-  }
-}
+$exePath = Assert-PublishLayout -PublishDir $pubDir -SelfContained $SelfContained -SingleFile $SingleFile
 
 # 2) Compose service binPath
 foreach ($d in @('XsdPath','OutDir','ImportDir')) {
@@ -356,12 +346,7 @@ if ($Publish) {
 # Minimal args: point to config and ensure service name alignment
 $argsList = @('--service','--config', $configPath, '--service-name', $ServiceName)
 
-function Format-ArgumentQuoted([string]$a) {
-  if ($a -match '"') { $a = ($a -replace '"','""') }
-  if ($a -match '\s') { return '"' + $a + '"' } else { return $a }
-}
-
-$binPath = ('"{0}" {1}' -f $exePath, (($argsList | ForEach-Object { Format-ArgumentQuoted $_ }) -join ' '))
+$binPath = ('"{0}" {1}' -f $exePath, (($argsList | ForEach-Object { Format-ServiceArgument -Argument $_ }) -join ' '))
 Write-Host "binPath: $binPath" -ForegroundColor DarkGray
 
 # 3) Stop an existing service when a forced configuration update was requested.
@@ -378,10 +363,6 @@ if ($exists -and $Force) {
 # 4) Create
 if (-not $exists) {
   $createArgs = @('create', $ServiceName, 'binPath=', $binPath, 'start=', 'auto', 'DisplayName=', $DisplayName)
-  if ($objName) {
-    $createArgs += @('obj=', $objName)
-    if ($pwdPlain) { $createArgs += @('password=', $pwdPlain) }
-  }
   Write-Host "Creating service..." -ForegroundColor DarkCyan
   # Retry create if service is marked for deletion (1072)
   $created = $false
@@ -407,12 +388,10 @@ if (-not $exists) {
 } else {
   Write-Host "Service already exists; updating config..." -ForegroundColor Yellow
   $configArgs = @('config', $ServiceName, 'binPath=', $binPath, 'start=', 'auto', 'DisplayName=', $DisplayName)
-  if ($objName) {
-    $configArgs += @('obj=', $objName)
-    if ($pwdPlain) { $configArgs += @('password=', $pwdPlain) }
-  }
   sc.exe @configArgs | Out-Null
 }
+
+Set-ServiceLogonAccount -name $ServiceName -account $objName -plainPassword $pwdPlain
 
 # 5) Set description and failure recovery
 if (Test-ServiceExists $ServiceName) {
@@ -424,15 +403,29 @@ if (Test-ServiceExists $ServiceName) {
 # 6) Start when requested or when deployment temporarily stopped a running service.
 $shouldStart = [bool]$Start -or $serviceWasRunning
 if ($shouldStart) {
+  $readinessPath = Join-Path $OutDir 'service.ready.json'
+  if (Test-Path $readinessPath) { Remove-Item -Force -LiteralPath $readinessPath }
   Write-Host "Starting service..." -ForegroundColor DarkCyan
   sc.exe start $ServiceName | Write-Output
   $startExitCode = $LASTEXITCODE
   $svc = Get-Service -Name $ServiceName -ErrorAction Stop
   try { $svc.WaitForStatus('Running', [TimeSpan]::FromSeconds(30)) } catch { }
   $svc.Refresh()
-  if ($startExitCode -ne 0 -or $svc.Status -ne 'Running') {
+  $readinessDeadline = (Get-Date).AddSeconds(30)
+  while ($svc.Status -eq 'Running' -and -not (Test-Path $readinessPath) -and (Get-Date) -lt $readinessDeadline) {
+    Start-Sleep -Milliseconds 250
+    $svc.Refresh()
+  }
+  $ready = $false
+  if (Test-Path $readinessPath) {
+    try {
+      $serviceProcessId = (Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop).ProcessId
+      $ready = Test-ServiceReadinessState -ReadinessPath $readinessPath -ProcessId $serviceProcessId
+    } catch { $ready = $false }
+  }
+  if ($startExitCode -ne 0 -or $svc.Status -ne 'Running' -or -not $ready) {
     Restore-PreviousDeployment
-    throw "Service '$ServiceName' failed to reach Running state within 30 seconds (sc.exe exit code $startExitCode, status $($svc.Status))."
+    throw "Service '$ServiceName' failed readiness within 30 seconds (sc.exe exit code $startExitCode, status $($svc.Status), ready=$ready)."
   }
   $svc | Format-Table -AutoSize Status, Name, DisplayName | Out-String | Write-Host
   if ($publishSwapped -and (Test-Path $backupDir)) { Remove-Item -Recurse -Force -LiteralPath $backupDir }

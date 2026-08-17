@@ -27,6 +27,9 @@ internal sealed class XmlToSqlImporter
     }
 
     public ImportResult ImportFile(string xmlPath)
+        => ImportFileAsync(xmlPath, CancellationToken.None).GetAwaiter().GetResult();
+
+    public async Task<ImportResult> ImportFileAsync(string xmlPath, CancellationToken cancellationToken)
     {
     // TODO: Add unit/integration tests covering XSD <choice> discriminator round-trip when a schema with choices is available.
     // Retry read briefly to avoid reading a file that's still being written by another process
@@ -34,6 +37,7 @@ internal sealed class XmlToSqlImporter
     int attempts = 0;
     while (true)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         try
         {
             doc = XDocument.Load(xmlPath);
@@ -41,7 +45,7 @@ internal sealed class XmlToSqlImporter
         }
         catch (IOException) when (attempts < 5)
         {
-            System.Threading.Thread.Sleep(100);
+            await Task.Delay(100, cancellationToken);
             attempts++;
             continue;
         }
@@ -50,18 +54,18 @@ internal sealed class XmlToSqlImporter
     _fileStart = DateTime.UtcNow;
     Log($"Importing file {xmlPath}");
         using var conn = new SqlConnection(_connectionString);
-        conn.Open();
-        using var tx = conn.BeginTransaction();
+        await conn.OpenAsync(cancellationToken);
+        await using var tx = await conn.BeginTransactionAsync(cancellationToken);
         var total = 0;
         var byTable = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            total += ImportElement(doc.Root!, parentTable: null, parentId: null, conn, tx, byTable);
-            tx.Commit();
+            total += await ImportElementAsync(doc.Root!, parentTable: null, parentId: null, conn, (SqlTransaction)tx, byTable, cancellationToken);
+            await tx.CommitAsync(cancellationToken);
         }
         catch
         {
-            tx.Rollback();
+            await tx.RollbackAsync(CancellationToken.None);
             throw;
         }
         finally
@@ -78,8 +82,9 @@ internal sealed class XmlToSqlImporter
         return new ImportResult(total, byTable);
     }
 
-    private int ImportElement(XElement elem, XsdToSqlServer.TableInfo? parentTable, int? parentId, SqlConnection conn, SqlTransaction tx, Dictionary<string,int> byTable)
+    private async Task<int> ImportElementAsync(XElement elem, XsdToSqlServer.TableInfo? parentTable, int? parentId, SqlConnection conn, SqlTransaction tx, Dictionary<string,int> byTable, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var inserted = 0;
         // Determine target table for this element: prefer direct match; if missing, try Parent_Child naming
         var rawName = elem.Name.LocalName;
@@ -110,7 +115,7 @@ internal sealed class XmlToSqlImporter
         {
             Log($"Skip element '{rawName}': no matching table; recursing into children.");
             Audit("skip-no-table", rawName, null, null, parentTable?.Name, parentId, null, "No matching table; recurse children", null);
-            foreach (var child in elem.Elements()) inserted += ImportElement(child, parentTable, parentId, conn, tx, byTable);
+            foreach (var child in elem.Elements()) inserted += await ImportElementAsync(child, parentTable, parentId, conn, tx, byTable, cancellationToken);
             return inserted;
         }
 
@@ -154,7 +159,7 @@ internal sealed class XmlToSqlImporter
             {
                 // insert default row
                 using var cmd = new SqlCommand($"INSERT INTO [{table.Schema}].[{table.Name}] DEFAULT VALUES; SELECT CAST(SCOPE_IDENTITY() AS INT);", conn, tx);
-                newId = (int?)cmd.ExecuteScalar();
+                newId = (int?)await cmd.ExecuteScalarAsync(cancellationToken);
                 if (newId.HasValue)
                 {
                     Log($"Inserted default row into {table.Schema}.{table.Name} to anchor children; id={newId.Value}");
@@ -235,7 +240,7 @@ internal sealed class XmlToSqlImporter
                             {
                                 selCmd.Parameters.AddWithValue("@u_" + c, values.TryGetValue(c, out var v) ? v ?? (object)DBNull.Value : DBNull.Value);
                             }
-                            var scalar = selCmd.ExecuteScalar();
+                            var scalar = await selCmd.ExecuteScalarAsync(cancellationToken);
                             if (scalar is int idv) { existingId = idv; break; }
                             if (scalar is long l) { existingId = (int)l; break; }
                         }
@@ -271,7 +276,7 @@ internal sealed class XmlToSqlImporter
                                 {
                                     selDup.Parameters.AddWithValue("@d_" + c, values.TryGetValue(c, out var v) ? v ?? (object)DBNull.Value : DBNull.Value);
                                 }
-                                var scalarDup = selDup.ExecuteScalar();
+                                var scalarDup = await selDup.ExecuteScalarAsync(cancellationToken);
                                 if (scalarDup is int idv2) existingId = idv2; else if (scalarDup is long l2) existingId = (int)l2;
                             }
                             if (existingId.HasValue)
@@ -305,7 +310,7 @@ internal sealed class XmlToSqlImporter
                         }
                         Log("Params: " + string.Join(", ", pairs));
                     }
-                    newId = (int?)cmd.ExecuteScalar();
+                    newId = (int?)await cmd.ExecuteScalarAsync(cancellationToken);
                     if (newId.HasValue)
                     {
                         var durMs = (int)(DateTime.UtcNow - opStart).TotalMilliseconds;
@@ -364,12 +369,12 @@ internal sealed class XmlToSqlImporter
             if (childTable is not null)
             {
                 Log($"Recurse into child element '{childRaw}' as table '{childTable.Name}'.");
-                inserted += ImportElement(child, table, nextParentId, conn, tx, byTable);
+                inserted += await ImportElementAsync(child, table, nextParentId, conn, tx, byTable, cancellationToken);
             }
             else
             {
                 // Fallback: recurse as before with current table as parent
-                inserted += ImportElement(child, nextParentTable, nextParentId, conn, tx, byTable);
+                inserted += await ImportElementAsync(child, nextParentTable, nextParentId, conn, tx, byTable, cancellationToken);
             }
         }
         return inserted;

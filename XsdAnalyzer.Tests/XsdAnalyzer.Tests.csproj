@@ -9,7 +9,7 @@
     <PackageReference Include="xunit" Version="2.7.1" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.8" />
     <PackageReference Include="coverlet.collector" Version="6.0.2" />
-    <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.0" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.6" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\XsdAnalyzer\XsdAnalyzer.csproj" />

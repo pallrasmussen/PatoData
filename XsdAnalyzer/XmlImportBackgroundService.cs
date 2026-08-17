@@ -25,6 +25,7 @@ internal sealed class XmlImportBackgroundService : BackgroundService
         try
         {
             Directory.CreateDirectory(_opts.OutDir);
+            ServiceReadiness.Clear(_opts.OutDir);
             var logPath = Path.Combine(_opts.OutDir, "import.log");
             var auditPath = Path.Combine(_opts.OutDir, "import_audit.csv");
             Observability.Configure(_opts.OutDir);
@@ -76,18 +77,22 @@ internal sealed class XmlImportBackgroundService : BackgroundService
             var errorDir = Path.Combine(Path.GetDirectoryName(_opts.ImportDir) ?? _opts.ImportDir, "error");
             Directory.CreateDirectory(errorDir);
 
-            bool importing = false;
-            object gate = new object();
-            // Track remote copy in progress separately
-            bool remoteCopying = false;
-            object remoteGate = new object();
-            void ImportBatch()
+            using var importGate = new SemaphoreSlim(1, 1);
+            RemoteFileLedger? remoteLedger = null;
+            string? remoteHistoryPath = null;
+            if (!string.IsNullOrWhiteSpace(_opts.RemoteSourceDir))
             {
-                lock (gate)
-                {
-                    if (importing) return;
-                    importing = true;
-                }
+                var defaultLedgerPath = Path.Combine(_opts.OutDir, "remote_copied_files.json");
+                var legacyHistoryPath = Path.Combine(_opts.OutDir, "remote_copied_files.txt");
+                remoteHistoryPath = _opts.RemoteHistoryFile
+                    ?? (File.Exists(defaultLedgerPath) || !File.Exists(legacyHistoryPath) ? defaultLedgerPath : legacyHistoryPath);
+                remoteLedger = RemoteFileLedger.Load(remoteHistoryPath);
+            }
+            // Track remote copy in progress separately
+            using var remoteGate = new SemaphoreSlim(1, 1);
+            async Task ImportBatchAsync()
+            {
+                if (!await importGate.WaitAsync(0, stoppingToken)) return;
                 try
                 {
                     var files = Directory.EnumerateFiles(_opts.ImportDir, "*.xml", SearchOption.TopDirectoryOnly).ToList();
@@ -99,7 +104,8 @@ internal sealed class XmlImportBackgroundService : BackgroundService
                             // Ensure file is ready before import
                             FileReady.WaitForFileReady(file, maxWaitMs: _opts.ReadyWaitMs);
                             var sw = System.Diagnostics.Stopwatch.StartNew();
-                            var result = importer.ImportFile(file);
+                            var result = await importer.ImportFileAsync(file, stoppingToken);
+                            remoteLedger?.MarkLocal(file, RemoteFileStatus.Imported);
                             var dest = Path.Combine(importedDir, Path.GetFileName(file));
                             File.Move(file, dest, overwrite: true);
                             var byTable = string.Join(
@@ -112,6 +118,7 @@ internal sealed class XmlImportBackgroundService : BackgroundService
                         }
                         catch (Exception ex)
                         {
+                            remoteLedger?.MarkLocal(file, RemoteFileStatus.Failed);
                             _logger.LogError(ex, "Failed to import {File}", file);
                             LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " Failed to import " + file + ": " + ex.Message);
                             try { Observability.RecordFailure(Path.GetFileName(file), ex.Message); } catch { }
@@ -127,16 +134,49 @@ internal sealed class XmlImportBackgroundService : BackgroundService
                 }
                 finally
                 {
-                    lock (gate) { importing = false; }
+                    importGate.Release();
                 }
             }
 
+            async Task RunScheduledImportAsync()
+            {
+                try
+                {
+                    await ImportBatchAsync();
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Scheduled import failed");
+                }
+            }
+
+            using var watcher = new FileSystemWatcher(_opts.ImportDir, "*.xml") { IncludeSubdirectories = false, EnableRaisingEvents = true };
+            System.Threading.Timer? debounceTimer = null;
+            void ScheduleImport()
+            {
+                try
+                {
+                    if (debounceTimer is null)
+                    {
+                        debounceTimer = new System.Threading.Timer(_ => { _ = RunScheduledImportAsync(); }, null, System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite);
+                    }
+                    debounceTimer.Change(_opts.DebounceMs, System.Threading.Timeout.Infinite);
+                }
+                catch { }
+            }
+            FileSystemEventHandler onCreated = (s, e) => { ScheduleImport(); };
+            RenamedEventHandler onRenamed = (s, e) => { ScheduleImport(); };
+            watcher.Created += onCreated;
+            watcher.Renamed += onRenamed;
+            ServiceReadiness.Signal(_opts.OutDir, gen.TableCount);
+
             // initial run
-            ImportBatch();
+            await ImportBatchAsync();
 
             // Remote source polling: copy new XMLs from a UNC path (if configured)
-            HashSet<string>? remoteSeen = null;
-            string? remoteHistoryPath = null;
             if (string.IsNullOrWhiteSpace(_opts.RemoteSourceDir))
             {
                 // Explicit disabled log for clarity
@@ -152,29 +192,16 @@ internal sealed class XmlImportBackgroundService : BackgroundService
             {
                 try
                 {
+                    var ledger = remoteLedger ?? throw new InvalidOperationException("Remote ledger was not initialized.");
                     var currentUser = System.Security.Principal.WindowsIdentity.GetCurrent()?.Name ?? Environment.UserName;
                     Directory.CreateDirectory(_opts.ImportDir);
-                    remoteHistoryPath = _opts.RemoteHistoryFile ?? Path.Combine(_opts.OutDir, "remote_copied_files.txt");
-                    remoteSeen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    if (File.Exists(remoteHistoryPath))
-                    {
-                        foreach (var line in File.ReadAllLines(remoteHistoryPath))
-                        {
-                            var trimmed = line.Trim(); if (trimmed.Length > 0) remoteSeen.Add(trimmed);
-                        }
-                    }
                     // Seed with any local XMLs (import queue, imported, error) to avoid duplicate copy/import if history missing
                     try
                     {
-                        int seeded = 0;
-                        foreach (var sd in new[] { _opts.ImportDir, importedDir, errorDir })
-                        {
-                            if (!Directory.Exists(sd)) continue;
-                            foreach (var f in Directory.EnumerateFiles(sd, "*.xml", SearchOption.TopDirectoryOnly))
-                            {
-                                if (remoteSeen.Add(Path.GetFileName(f))) seeded++;
-                            }
-                        }
+                        var existingFiles = new[] { _opts.ImportDir, importedDir, errorDir }
+                            .Where(Directory.Exists)
+                            .SelectMany(directory => Directory.EnumerateFiles(directory, "*.xml", SearchOption.TopDirectoryOnly));
+                        var seeded = ledger.SeedExistingFiles(existingFiles);
                         if (seeded > 0)
                         {
                             var seedMsg = $"[remote] Seeded history with {seeded} existing local file(s)";
@@ -212,7 +239,7 @@ internal sealed class XmlImportBackgroundService : BackgroundService
                         foreach (var rf in backlog)
                         {
                             var name = Path.GetFileName(rf);
-                            if (remoteSeen.Contains(name)) continue;
+                            if (ledger.ContainsCurrent(rf)) continue;
                             try
                             {
                                 var dest = Path.Combine(_opts.ImportDir, name);
@@ -221,11 +248,7 @@ internal sealed class XmlImportBackgroundService : BackgroundService
                                     dest = Path.Combine(_opts.ImportDir, Path.GetFileNameWithoutExtension(dest) + "_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + Path.GetExtension(dest));
                                 }
                                 File.Copy(rf, dest, overwrite: false);
-                                remoteSeen.Add(name);
-                                if (!string.IsNullOrWhiteSpace(remoteHistoryPath))
-                                {
-                                    try { File.AppendAllText(remoteHistoryPath, name + Environment.NewLine); } catch { }
-                                }
+                                ledger.RecordCopied(rf, dest);
                                 var msg = $"[remote] Backlog copied {rf} -> {dest}";
                                 _logger.LogInformation(msg);
                                 LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + msg);
@@ -240,7 +263,7 @@ internal sealed class XmlImportBackgroundService : BackgroundService
                         var summary = copied > 0 ? $"[remote] Backlog copied {copied} file(s)" : "[remote] No backlog files to copy (0 new)";
                         _logger.LogInformation(summary);
                         LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + summary);
-                        if (copied > 0) ImportBatch();
+                        if (copied > 0) await ImportBatchAsync();
                     }
                 }
                 catch (Exception ex)
@@ -249,14 +272,10 @@ internal sealed class XmlImportBackgroundService : BackgroundService
                 }
             }
 
-            void PollRemote()
+            async Task PollRemoteAsync()
             {
-                if (string.IsNullOrWhiteSpace(_opts.RemoteSourceDir) || remoteSeen is null) return;
-                lock (remoteGate)
-                {
-                    if (remoteCopying) return; // prevent overlapping polls
-                    remoteCopying = true;
-                }
+                if (string.IsNullOrWhiteSpace(_opts.RemoteSourceDir) || remoteLedger is null) return;
+                if (!await remoteGate.WaitAsync(0, stoppingToken)) return;
                 try
                 {
                     string srcDir = _opts.RemoteSourceDir!;
@@ -264,7 +283,7 @@ internal sealed class XmlImportBackgroundService : BackgroundService
                     var remoteFiles = Directory.EnumerateFiles(srcDir, "*.xml", SearchOption.TopDirectoryOnly).OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
                     foreach (var rf in remoteFiles)
                     {
-                        if (remoteSeen.Contains(Path.GetFileName(rf))) continue;
+                        if (remoteLedger.ContainsCurrent(rf)) continue;
                         try
                         {
                             // Basic daily guarantee: remote is expected to drop 1 file ~08:00; still copy robustly any missing.
@@ -276,17 +295,11 @@ internal sealed class XmlImportBackgroundService : BackgroundService
                                 dest = alt;
                             }
                             File.Copy(rf, dest, overwrite: false);
-                            remoteSeen.Add(Path.GetFileName(rf));
-                            try
-                            {
-                                if (!string.IsNullOrWhiteSpace(remoteHistoryPath))
-                                    File.AppendAllText(remoteHistoryPath, Path.GetFileName(rf) + Environment.NewLine);
-                            }
-                            catch { }
+                            remoteLedger.RecordCopied(rf, dest);
                             _logger.LogInformation("Copied remote XML {RemoteFile} -> {Local}", rf, dest);
                             try { Observability.RecordRemoteCopy(rf, dest); } catch { }
                             // Schedule import after copy (debounced watcher will also catch create, but we call directly for immediacy)
-                            ImportBatch();
+                            await ImportBatchAsync();
                         }
                         catch (Exception copyEx)
                         {
@@ -296,28 +309,9 @@ internal sealed class XmlImportBackgroundService : BackgroundService
                 }
                 finally
                 {
-                    lock (remoteGate) { remoteCopying = false; }
+                    remoteGate.Release();
                 }
             }
-
-            using var watcher = new FileSystemWatcher(_opts.ImportDir, "*.xml") { IncludeSubdirectories = false, EnableRaisingEvents = true };
-            System.Threading.Timer? debounceTimer = null;
-            void ScheduleImport()
-            {
-                try
-                {
-                    if (debounceTimer is null)
-                    {
-                        debounceTimer = new System.Threading.Timer(_ => { try { ImportBatch(); } catch { } }, null, System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite);
-                    }
-                    debounceTimer.Change(_opts.DebounceMs, System.Threading.Timeout.Infinite);
-                }
-                catch { }
-            }
-            FileSystemEventHandler onCreated = (s, e) => { ScheduleImport(); };
-            RenamedEventHandler onRenamed = (s, e) => { ScheduleImport(); };
-            watcher.Created += onCreated;
-            watcher.Renamed += onRenamed;
 
             // Keep alive
             try
@@ -329,7 +323,7 @@ internal sealed class XmlImportBackgroundService : BackgroundService
                     if (!string.IsNullOrWhiteSpace(_opts.RemoteSourceDir) && (DateTime.UtcNow - lastRemote).TotalSeconds >= remotePoll)
                     {
                         lastRemote = DateTime.UtcNow;
-                        try { PollRemote(); } catch { }
+                        try { await PollRemoteAsync(); } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
                     }
                     await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
                 }
@@ -338,6 +332,7 @@ internal sealed class XmlImportBackgroundService : BackgroundService
             {
                 watcher.Created -= onCreated;
                 watcher.Renamed -= onRenamed;
+                debounceTimer?.Dispose();
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -348,6 +343,10 @@ internal sealed class XmlImportBackgroundService : BackgroundService
         {
             _logger.LogError(ex, "Service initialization failed");
             throw;
+        }
+        finally
+        {
+            try { ServiceReadiness.Clear(_opts.OutDir); } catch { }
         }
     }
 

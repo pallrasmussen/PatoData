@@ -6,7 +6,7 @@
   .\scripts\uninstall-importer-service.ps1 -ServiceName PatoDataXmlImporter -RemovePublish
 #>
 
-[CmdletBinding(SupportsShouldProcess=$true)]
+[CmdletBinding()]
 param(
   [string]$ServiceName = 'PatoDataXmlImporter',
   [switch]$RemovePublish,

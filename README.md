@@ -116,12 +116,12 @@ Parameters include `-ServiceName`, `-DisplayName`, `-XsdPath`, `-OutDir`, `-Sche
 
 Remote polling parameters now supported directly on the installer script:
 
-````powershell
-.\scriptsuild-and-install-importer-service.ps1 `
+```powershell
+.\scripts\install-importer-service.ps1 `
 	-Connection "Server=.;Database=PatoData;Trusted_Connection=True;TrustServerCertificate=True" `
 	-RemoteSourceDir \\server\share\Patopost\LPRP `
 	-RemotePollSeconds 600 `
-	-RemoteHistoryFile C:\data\pato\remote_copied_files.txt `
+	-RemoteHistoryFile C:\data\pato\remote_copied_files.json `
 	-ImportDir .\xml\in `
 	-OutDir .\out `
 	-XsdPath .\161219-161219.XSD `
@@ -129,7 +129,7 @@ Remote polling parameters now supported directly on the installer script:
 	-DisplayName "PatoData XML Importer" `
 	-Account "DOMAIN\\svc_pato" `
 	-Start -Force
-````
+```
 
 If `-RemoteSourceDir` is omitted, remote ingestion is disabled and the service logs `[remote] Disabled` (or a not-found status if a path was specified but is unreachable).
 
@@ -140,6 +140,8 @@ Validate configuration without starting the service or importing files:
 ```powershell
 & 'C:\Program Files\PatoData\XsdAnalyzer\XsdAnalyzer.exe' --validate-config --config 'C:\ProgramData\PatoData\XsdAnalyzer\appsettings.json'
 ```
+
+The installer also waits for `out\service.ready.json` and verifies that its PID matches the Windows service process and that the XSD produced at least one table. SCM `Running` alone is not treated as successful deployment.
 
 - Reinstall and verify flags (no `--verbose-import`, no `--audit`):
 
@@ -181,6 +183,7 @@ Troubleshooting:
 - On startup, the service writes a line like `Startup: XSD=…; ImportDir=…; OutDir=…; Schema=…; Tables=N; …` to `out/import.log`. Ensure `Tables > 0` and paths are correct.
 - Failures before the generic host starts are written to `C:\ProgramData\PatoData\logs\startup.log` (with a temporary-directory fallback if ProgramData is not writable).
 - An explicitly supplied missing or malformed `--config` exits immediately with code 2 and records the exact error in the bootstrap log instead of surfacing only as SCM events 7000/7009.
+- `appsettings.json` is local-only and ignored by Git. `appsettings.example.json` contains sanitized defaults for new environments.
 - If `import_audit.csv` appears unexpectedly, check the service binPath (via `sc.exe qc`) and VS Code tasks to ensure `--audit` isn’t being passed.
 - If files are moved but rows are not inserted, verify service account SQL/NTFS permissions and that the XSD path is accessible to the service.
 
@@ -313,7 +316,7 @@ Environment variables:
 ```powershell
 $env:PATO_REMOTE_SOURCE_DIR="\\\server\share\Patopost\LPRP"
 $env:PATO_REMOTE_POLL_SECONDS="600"   # seconds (default 300, min enforced 30)
-$env:PATO_REMOTE_HISTORY_FILE="C:\\data\\pato\\remote_copied_files.txt"  # optional
+$env:PATO_REMOTE_HISTORY_FILE="C:\\data\\pato\\remote_copied_files.json"  # optional
 ```
 
 `appsettings.json` (optional – lowest precedence after explicit args/env):
@@ -322,14 +325,14 @@ $env:PATO_REMOTE_HISTORY_FILE="C:\\data\\pato\\remote_copied_files.txt"  # optio
 {
 	"RemoteSourceDir": "\\\\server\\share\\Patopost\\LPRP",
 	"RemotePollSeconds": 600,
-	"RemoteHistoryFile": "C:\\data\\pato\\remote_copied_files.txt"
+	"RemoteHistoryFile": "C:\\data\\pato\\remote_copied_files.json"
 }
 ```
 
 Behavior:
 - Every `RemotePollSeconds` (default 300; minimum 30) the service enumerates `*.xml` in the UNC path.
 - Each previously unseen filename is copied into the local `--import-dir` (collision-safe; timestamp appended if needed) and immediately scheduled for import.
-- Imported source filenames are persisted to a history file (`remote_copied_files.txt` under `--out` by default) so restarts avoid re-copying.
+- Remote state is persisted atomically as JSON (`remote_copied_files.json` under `--out` by default), including source path, size, modification time, local path, and `Copied`/`Imported`/`Failed` status. Existing line-based history is migrated automatically.
 - Copy + import events are logged in `out/import.log` (look for `Copied remote XML ...`).
 
 Operational notes:
@@ -346,7 +349,7 @@ Troubleshooting remote polling:
 - Poll interval confusion: verify the effective interval (min 30s) by searching log for successive `Copied remote XML` timestamps.
 - Duplicate prevention: open the history file and confirm each source filename exists once.
 
-Future enhancements (roadmap): retries/backoff on transient network errors, file readiness probe on UNC before copy, observability counters for `remote_files_copied_total`.
+Future enhancements (roadmap): retries/backoff on transient network errors, file readiness probe on UNC before copy, and retry policy for ledger entries in `Failed` status.
 
 ## Notes
 - Replace `xsd/sample.xsd` with your actual schema.

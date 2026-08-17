@@ -26,7 +26,7 @@ void BootstrapLog(string msg)
 {
     try { File.AppendAllText(bootstrapLog, DateTime.Now.ToString("s") + " " + msg + Environment.NewLine); } catch { }
 }
-BootstrapLog("Process starting (pid=" + Environment.ProcessId + ") args=[" + string.Join(" ", args.Select(a => a.Contains(' ') ? '"' + a + '"' : a)) + "]");
+BootstrapLog("Process starting (pid=" + Environment.ProcessId + ") args=[" + StartupDiagnostics.FormatArguments(args) + "]");
 
 static int PrintUsage(int exitCode)
 {
@@ -64,18 +64,27 @@ string? configPath = null;
 string? remoteSourceDir = null;
 int remotePollSeconds = 300; // default 5 minutes
 string? remoteHistoryFile = null;
+bool outDirSpecified = false;
+bool schemaSpecified = false;
+bool watchSpecified = false;
+bool verboseImportSpecified = false;
+bool auditSpecified = false;
+bool debounceSpecified = false;
+bool readyWaitSpecified = false;
+bool idempotencySpecified = false;
+bool remotePollSpecified = false;
 
 for (int i = 0; i < args.Length; i++)
 {
     if (args[i] == "--xsd" && i + 1 < args.Length) xsdPath = args[++i];
-    else if (args[i] == "--out" && i + 1 < args.Length) outDir = args[++i];
-    else if (args[i] == "--schema" && i + 1 < args.Length) sqlSchema = args[++i];
+    else if (args[i] == "--out" && i + 1 < args.Length) { outDir = args[++i]; outDirSpecified = true; }
+    else if (args[i] == "--schema" && i + 1 < args.Length) { sqlSchema = args[++i]; schemaSpecified = true; }
     else if (args[i] == "--xml" && i + 1 < args.Length) exampleXmlPath = args[++i];
     else if (args[i] == "--import-dir" && i + 1 < args.Length) importFolder = args[++i];
     else if (args[i] == "--connection" && i + 1 < args.Length) connectionString = args[++i];
-    else if (args[i] == "--watch") watch = true;
-    else if (args[i] == "--verbose-import") verboseImport = true;
-    else if (args[i] == "--audit") audit = true;
+    else if (args[i] == "--watch") { watch = true; watchSpecified = true; }
+    else if (args[i] == "--verbose-import") { verboseImport = true; verboseImportSpecified = true; }
+    else if (args[i] == "--audit") { audit = true; auditSpecified = true; }
     else if (args[i] == "--service") runAsService = true;
     else if (args[i] == "--validate-config") validateConfig = true;
     else if (args[i] is "--help" or "-h") showHelp = true;
@@ -83,15 +92,16 @@ for (int i = 0; i < args.Length; i++)
     else if (args[i] == "--config" && i + 1 < args.Length) configPath = args[++i];
     else if (args[i] == "--debounce-ms" && i + 1 < args.Length)
     {
-        if (int.TryParse(args[++i], out var v) && v >= 0) debounceMs = v;
+        if (int.TryParse(args[++i], out var v) && v >= 0) { debounceMs = v; debounceSpecified = true; }
     }
     else if (args[i] == "--ready-wait-ms" && i + 1 < args.Length)
     {
-        if (int.TryParse(args[++i], out var v) && v >= 0) readyWaitMs = v;
+        if (int.TryParse(args[++i], out var v) && v >= 0) { readyWaitMs = v; readyWaitSpecified = true; }
     }
     else if (args[i] == "--no-idempotency")
     {
         idempotencyEnabled = false;
+        idempotencySpecified = true;
     }
     else if (args[i] == "--remote-source-dir" && i + 1 < args.Length)
     {
@@ -99,7 +109,7 @@ for (int i = 0; i < args.Length; i++)
     }
     else if (args[i] == "--remote-poll-seconds" && i + 1 < args.Length)
     {
-        if (int.TryParse(args[++i], out var v) && v > 0) remotePollSeconds = v;
+        if (int.TryParse(args[++i], out var v) && v > 0) { remotePollSeconds = v; remotePollSpecified = true; }
     }
     else
     {
@@ -131,26 +141,27 @@ int? EnvInt(string name)
 }
 
 if (string.IsNullOrWhiteSpace(xsdPath)) xsdPath = Env("PATO_XSD") ?? xsdPath;
-if (string.IsNullOrWhiteSpace(outDir) || outDir == Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "out"))
+if (!outDirSpecified)
 {
-    var e = Env("PATO_OUT"); if (!string.IsNullOrWhiteSpace(e)) outDir = e!;
+    var e = Env("PATO_OUT"); if (!string.IsNullOrWhiteSpace(e)) { outDir = e!; outDirSpecified = true; }
 }
-if (sqlSchema == "dbo") { var e = Env("PATO_SCHEMA"); if (!string.IsNullOrWhiteSpace(e)) sqlSchema = e!; }
+if (!schemaSpecified) { var e = Env("PATO_SCHEMA"); if (!string.IsNullOrWhiteSpace(e)) { sqlSchema = e!; schemaSpecified = true; } }
 if (string.IsNullOrWhiteSpace(importFolder)) importFolder = Env("PATO_IMPORT_DIR") ?? importFolder;
 if (string.IsNullOrWhiteSpace(connectionString)) connectionString = Env("PATO_CONNECTION") ?? Env("PATO_CONN") ?? connectionString;
-if (!watch) watch = EnvBool("PATO_WATCH");
-if (!verboseImport) verboseImport = EnvBool("PATO_VERBOSE_IMPORT");
-if (!audit) audit = EnvBool("PATO_AUDIT");
-var dms = EnvInt("PATO_DEBOUNCE_MS"); if (dms.HasValue && debounceMs == 200) debounceMs = Math.Max(0, dms.Value);
-var rw = EnvInt("PATO_READY_WAIT_MS"); if (rw.HasValue && readyWaitMs == 2000) readyWaitMs = Math.Max(0, rw.Value);
+if (!watchSpecified && Env("PATO_WATCH") is not null) { watch = EnvBool("PATO_WATCH"); watchSpecified = true; }
+if (!verboseImportSpecified && Env("PATO_VERBOSE_IMPORT") is not null) { verboseImport = EnvBool("PATO_VERBOSE_IMPORT"); verboseImportSpecified = true; }
+if (!auditSpecified && Env("PATO_AUDIT") is not null) { audit = EnvBool("PATO_AUDIT"); auditSpecified = true; }
+var dms = EnvInt("PATO_DEBOUNCE_MS"); if (!debounceSpecified && dms.HasValue) { debounceMs = Math.Max(0, dms.Value); debounceSpecified = true; }
+var rw = EnvInt("PATO_READY_WAIT_MS"); if (!readyWaitSpecified && rw.HasValue) { readyWaitMs = Math.Max(0, rw.Value); readyWaitSpecified = true; }
 var idemEnv = Env("PATO_IDEMPOTENCY_ENABLED");
-if (!string.IsNullOrWhiteSpace(idemEnv))
+if (!idempotencySpecified && !string.IsNullOrWhiteSpace(idemEnv))
 {
     idempotencyEnabled = idemEnv.Equals("1") || idemEnv.Equals("true", StringComparison.OrdinalIgnoreCase) || idemEnv.Equals("yes", StringComparison.OrdinalIgnoreCase);
+    idempotencySpecified = true;
 }
 var svcEnv = Env("PATO_SERVICE_NAME"); if (string.IsNullOrWhiteSpace(serviceNameOverride) && !string.IsNullOrWhiteSpace(svcEnv)) serviceNameOverride = svcEnv;
 if (string.IsNullOrWhiteSpace(remoteSourceDir)) remoteSourceDir = Env("PATO_REMOTE_SOURCE_DIR") ?? remoteSourceDir;
-var rpsEnv = EnvInt("PATO_REMOTE_POLL_SECONDS"); if (rpsEnv.HasValue && remotePollSeconds == 300) remotePollSeconds = Math.Max(1, rpsEnv.Value);
+var rpsEnv = EnvInt("PATO_REMOTE_POLL_SECONDS"); if (!remotePollSpecified && rpsEnv.HasValue) { remotePollSeconds = Math.Max(1, rpsEnv.Value); remotePollSpecified = true; }
 if (string.IsNullOrWhiteSpace(remoteHistoryFile)) remoteHistoryFile = Env("PATO_REMOTE_HISTORY_FILE") ?? remoteHistoryFile;
 
 // Config file (lowest precedence, but before hard-coded defaults)
@@ -186,20 +197,19 @@ if (!string.IsNullOrWhiteSpace(configPath))
 if (cfg is not null)
 {
     xsdPath ??= cfg.Xsd;
-    if (string.IsNullOrWhiteSpace(outDir) || outDir == Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "out"))
-        outDir = cfg.OutDir ?? outDir;
-    if (sqlSchema == "dbo" && !string.IsNullOrWhiteSpace(cfg.Schema)) sqlSchema = cfg.Schema!;
+    if (!outDirSpecified && !string.IsNullOrWhiteSpace(cfg.OutDir)) outDir = cfg.OutDir!;
+    if (!schemaSpecified && !string.IsNullOrWhiteSpace(cfg.Schema)) sqlSchema = cfg.Schema!;
     importFolder ??= cfg.ImportDir;
     connectionString ??= cfg.Connection;
-    if (!watch && cfg.Watch.HasValue) watch = cfg.Watch.Value;
-    if (!verboseImport && cfg.VerboseImport.HasValue) verboseImport = cfg.VerboseImport.Value;
-    if (!audit && cfg.Audit.HasValue) audit = cfg.Audit.Value;
-    if (debounceMs == 200 && cfg.DebounceMs.HasValue) debounceMs = Math.Max(0, cfg.DebounceMs.Value);
-    if (readyWaitMs == 2000 && cfg.ReadyWaitMs.HasValue) readyWaitMs = Math.Max(0, cfg.ReadyWaitMs.Value);
-    if (cfg.IdempotencyEnabled.HasValue) idempotencyEnabled = cfg.IdempotencyEnabled.Value;
+    if (!watchSpecified && cfg.Watch.HasValue) watch = cfg.Watch.Value;
+    if (!verboseImportSpecified && cfg.VerboseImport.HasValue) verboseImport = cfg.VerboseImport.Value;
+    if (!auditSpecified && cfg.Audit.HasValue) audit = cfg.Audit.Value;
+    if (!debounceSpecified && cfg.DebounceMs.HasValue) debounceMs = Math.Max(0, cfg.DebounceMs.Value);
+    if (!readyWaitSpecified && cfg.ReadyWaitMs.HasValue) readyWaitMs = Math.Max(0, cfg.ReadyWaitMs.Value);
+    if (!idempotencySpecified && cfg.IdempotencyEnabled.HasValue) idempotencyEnabled = cfg.IdempotencyEnabled.Value;
     serviceNameOverride ??= cfg.ServiceName;
     remoteSourceDir ??= cfg.RemoteSourceDir;
-    if (remotePollSeconds == 300 && cfg.RemotePollSeconds.HasValue) remotePollSeconds = Math.Max(1, cfg.RemotePollSeconds.Value);
+    if (!remotePollSpecified && cfg.RemotePollSeconds.HasValue) remotePollSeconds = Math.Max(1, cfg.RemotePollSeconds.Value);
     remoteHistoryFile ??= cfg.RemoteHistoryFile;
 }
 
@@ -211,6 +221,13 @@ if (!string.IsNullOrWhiteSpace(xsdPath) && !File.Exists(xsdPath)) serviceConfigu
 
 if (validateConfig)
 {
+    if (string.IsNullOrWhiteSpace(configPath))
+    {
+        const string error = "--validate-config requires --config <path> or an appsettings.json in the current directory.";
+        Console.Error.WriteLine(error);
+        BootstrapLog(error);
+        return 2;
+    }
     if (serviceConfigurationErrors.Count > 0)
     {
         foreach (var error in serviceConfigurationErrors) Console.Error.WriteLine(error);
