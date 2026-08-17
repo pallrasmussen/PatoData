@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Data.SqlClient;
 using System.Xml;
 using System.Xml.Schema;
 
@@ -43,16 +44,7 @@ internal sealed class XmlImportBackgroundService : BackgroundService
             // One-time startup diagnostics
             try
             {
-                string Safe(string? s)
-                {
-                    if (string.IsNullOrWhiteSpace(s)) return string.Empty;
-                    // Mask likely sensitive parts of connection string
-                    var masked = s
-                        .Replace("Password=", "Password=***", StringComparison.OrdinalIgnoreCase)
-                        .Replace("Pwd=", "Pwd=***", StringComparison.OrdinalIgnoreCase);
-                    return masked;
-                }
-                var diag = $"[service] Startup: XSD={_opts.Xsd}; ImportDir={_opts.ImportDir}; OutDir={_opts.OutDir}; Schema={_opts.Schema}; Tables={gen.TableCount}; Connection={Safe(_opts.Connection)}";
+                var diag = $"[service] Startup: XSD={_opts.Xsd}; ImportDir={_opts.ImportDir}; OutDir={_opts.OutDir}; Schema={_opts.Schema}; Tables={gen.TableCount}; Connection={RedactConnectionString(_opts.Connection)}";
                 _logger.LogInformation(diag);
                 LogFile.AppendLine(logPath, DateTime.Now.ToString("s") + " " + diag);
             }
@@ -348,10 +340,30 @@ internal sealed class XmlImportBackgroundService : BackgroundService
                 watcher.Renamed -= onRenamed;
             }
         }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            _logger.LogInformation("Service stopped by request");
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Service initialization failed");
             throw;
+        }
+    }
+
+    internal static string RedactConnectionString(string? connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString)) return string.Empty;
+
+        try
+        {
+            var builder = new SqlConnectionStringBuilder(connectionString);
+            if (!string.IsNullOrEmpty(builder.Password)) builder.Password = "***";
+            return builder.ConnectionString;
+        }
+        catch (ArgumentException)
+        {
+            return "[invalid connection string]";
         }
     }
 }

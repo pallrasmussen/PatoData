@@ -25,10 +25,14 @@ $XsdPath    = if ($env:PATO_XSD) { $env:PATO_XSD } else { Join-Path $RepoRoot '1
 $OutDir     = if ($env:PATO_OUT) { $env:PATO_OUT } else { Join-Path $RepoRoot 'out' }
 $Schema     = if ($env:PATO_SCHEMA) { $env:PATO_SCHEMA } else { 'xsd' }
 $ImportDir  = if ($env:PATO_IMPORT_DIR) { $env:PATO_IMPORT_DIR } else { Join-Path $RepoRoot 'xml\in' }
+$RemoteSourceDir = if ($env:PATO_REMOTE_SOURCE_DIR) { $env:PATO_REMOTE_SOURCE_DIR } else { $null }
+$RemotePollSeconds = if ($env:PATO_REMOTE_POLL_SECONDS) { [int]$env:PATO_REMOTE_POLL_SECONDS } else { 300 }
+$RemoteHistoryFile = if ($env:PATO_REMOTE_HISTORY_FILE) { $env:PATO_REMOTE_HISTORY_FILE } else { $null }
 
 # Publish options
 $Project    = Join-Path $RepoRoot 'XsdAnalyzer\XsdAnalyzer.csproj'
-$PublishDir = Join-Path $RepoRoot 'publish\XsdAnalyzer'
+$PublishDir = Join-Path $env:ProgramFiles 'PatoData\XsdAnalyzer'
+$ConfigDir  = Join-Path $env:ProgramData 'PatoData\XsdAnalyzer'
 $Runtime    = 'win-x64'
 $Configuration = 'Release'
 $SingleFile = $false

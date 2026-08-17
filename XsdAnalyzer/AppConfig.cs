@@ -21,14 +21,29 @@ internal sealed class AppConfig
     public int? RemotePollSeconds { get; set; }
     public string? RemoteHistoryFile { get; set; }
 
-    public static AppConfig? Load(string path)
+    public static AppConfig Load(string path)
     {
-        try
+        var text = File.ReadAllText(path);
+        return JsonSerializer.Deserialize<AppConfig>(text)
+            ?? throw new JsonException($"Configuration file '{path}' is empty or contains JSON null.");
+    }
+
+    public IReadOnlyList<string> ValidateForService()
+    {
+        var errors = new List<string>();
+        AddRequiredError(errors, nameof(Xsd), Xsd);
+        AddRequiredError(errors, nameof(OutDir), OutDir);
+        AddRequiredError(errors, nameof(ImportDir), ImportDir);
+        AddRequiredError(errors, nameof(Connection), Connection);
+        AddRequiredError(errors, nameof(ServiceName), ServiceName);
+        return errors;
+    }
+
+    private static void AddRequiredError(List<string> errors, string name, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
         {
-            var text = File.ReadAllText(path);
-            var cfg = JsonSerializer.Deserialize<AppConfig>(text);
-            return cfg;
+            errors.Add($"Missing required setting '{name}'.");
         }
-        catch { return null; }
     }
 }

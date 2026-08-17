@@ -65,6 +65,7 @@ obj/
 
 # Generated artifacts
 out/
+publish/
 xml/imported/
 xml/error/
 
@@ -81,4 +82,3 @@ out/import_audit.csv
 # Local overrides
 scripts/*.local.ps1
 scripts/service.env.local.ps1
-publish/XsdAnalyzer.appsettings.json

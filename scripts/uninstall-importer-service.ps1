@@ -10,7 +10,9 @@
 param(
   [string]$ServiceName = 'PatoDataXmlImporter',
   [switch]$RemovePublish,
-  [string]$PublishDir = (Join-Path $PSScriptRoot '..\publish\XsdAnalyzer')
+  [string]$PublishDir = (Join-Path $env:ProgramFiles 'PatoData\XsdAnalyzer'),
+  [switch]$RemoveConfig,
+  [string]$ConfigDir = (Join-Path $env:ProgramData 'PatoData\XsdAnalyzer')
 )
 
 set-strictmode -version latest
@@ -44,6 +46,11 @@ if ($RemovePublish) {
     Write-Host "Removing publish directory: $pubDir" -ForegroundColor DarkCyan
     Remove-Item -Recurse -Force -LiteralPath $pubDir
   }
+}
+
+if ($RemoveConfig -and (Test-Path $ConfigDir)) {
+  Write-Host "Removing configuration directory: $ConfigDir" -ForegroundColor DarkCyan
+  Remove-Item -Recurse -Force -LiteralPath $ConfigDir
 }
 
 Write-Host "Done." -ForegroundColor Green

@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-  [switch]$RemovePublish
+  [switch]$RemovePublish,
+  [switch]$RemoveConfig
 )
 
 set-strictmode -version latest
@@ -13,4 +14,6 @@ $uninstall = Join-Path $PSScriptRoot 'uninstall-importer-service.ps1'
 & $uninstall `
   -ServiceName $ServiceName `
   -RemovePublish:([bool]$RemovePublish) `
-  -PublishDir $PublishDir
+  -PublishDir $PublishDir `
+  -RemoveConfig:([bool]$RemoveConfig) `
+  -ConfigDir $ConfigDir

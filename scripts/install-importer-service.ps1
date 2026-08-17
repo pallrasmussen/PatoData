@@ -39,7 +39,8 @@ param(
   # Publish settings
   [bool]$Publish = $true,
   [string]$Project = (Join-Path $PSScriptRoot '..\XsdAnalyzer\XsdAnalyzer.csproj'),
-  [string]$PublishDir = (Join-Path $PSScriptRoot '..\publish\XsdAnalyzer'),
+  [string]$PublishDir = (Join-Path $env:ProgramFiles 'PatoData\XsdAnalyzer'),
+  [string]$ConfigDir = (Join-Path $env:ProgramData 'PatoData\XsdAnalyzer'),
   [string]$Runtime = 'win-x64',
   [string]$Configuration = 'Release',
   [bool]$SingleFile = $true,
@@ -97,6 +98,25 @@ function Convert-SecureStringToPlain([SecureString]$Secure)
   try { return [Runtime.InteropServices.Marshal]::PtrToStringUni($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
 }
 
+function Protect-ConfigFile([string]$path, [string]$serviceIdentity) {
+  try {
+    $acl = Get-Acl -LiteralPath $path
+    $acl.SetAccessRuleProtection($true, $false)
+    $fullControl = [System.Security.AccessControl.FileSystemRights]::FullControl
+    $readAccess = [System.Security.AccessControl.FileSystemRights]::ReadAndExecute
+    $allow = [System.Security.AccessControl.AccessControlType]::Allow
+    foreach ($identity in @('BUILTIN\Administrators', 'NT AUTHORITY\SYSTEM')) {
+      $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($identity, $fullControl, $allow)))
+    }
+    if ($serviceIdentity -and $serviceIdentity -notin @('LocalSystem', 'NT AUTHORITY\SYSTEM')) {
+      $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($serviceIdentity, $readAccess, $allow)))
+    }
+    Set-Acl -LiteralPath $path -AclObject $acl
+  } catch {
+    throw "Failed to secure service configuration '$path': $($_.Exception.Message)"
+  }
+}
+
 function Test-ServiceExists([string]$name) {
   sc.exe query $name | Out-Null
   if ($LASTEXITCODE -eq 0) { return $true } else { return $false }
@@ -142,9 +162,24 @@ if ($Account -and $Account -ne 'LocalSystem') {
 Write-Host "Installing Windows Service '$ServiceName' (DisplayName: '$DisplayName')" -ForegroundColor Cyan
 
 # 1) Publish
+$pubDir = Resolve-FullPath $PublishDir
+$stagingDir = $null
+$backupDir = $null
+$publishSwapped = $false
+$serviceExistedInitially = Test-ServiceExists $ServiceName
+$serviceWasRunning = $false
+$originalServicePath = $null
+if ($serviceExistedInitially) {
+  $initialService = Get-Service -Name $ServiceName -ErrorAction Stop
+  $serviceWasRunning = $initialService.Status -ne 'Stopped'
+  $originalServicePath = (Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction Stop).PathName
+}
 if ($Publish) {
-  $pubDir = Resolve-FullPath $PublishDir
-  if (-not (Test-Path $pubDir)) { New-Item -ItemType Directory -Path $pubDir | Out-Null }
+  $publishParent = Split-Path -Parent $pubDir
+  if (-not (Test-Path $publishParent)) { New-Item -ItemType Directory -Force -Path $publishParent | Out-Null }
+  $stagingDir = "$pubDir.staging.$PID"
+  if (Test-Path $stagingDir) { Remove-Item -Recurse -Force -LiteralPath $stagingDir }
+  New-Item -ItemType Directory -Force -Path $stagingDir | Out-Null
 
   $props = @()
   if ($SingleFile) {
@@ -155,19 +190,51 @@ if ($Publish) {
   }
   if ($SelfContained) { $props += '/p:SelfContained=true' } else { $props += '/p:SelfContained=false' }
 
-  Write-Host "Publishing to: $pubDir" -ForegroundColor DarkCyan
-  $publishArgs = @('publish', (Resolve-FullPath $Project), '-c', $Configuration, '-r', $Runtime, '-o', $pubDir) + $props
+  Write-Host "Publishing to staging directory: $stagingDir" -ForegroundColor DarkCyan
+  $publishArgs = @('publish', (Resolve-FullPath $Project), '-c', $Configuration, '-r', $Runtime, '-o', $stagingDir) + $props
   Write-Host ("dotnet {0}" -f ($publishArgs -join ' ')) -ForegroundColor DarkGray
   & dotnet @publishArgs
   if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE" }
+
+  $stagedExePath = Join-Path $stagingDir 'XsdAnalyzer.exe'
+  if (-not (Test-Path $stagedExePath)) { throw "Staged executable not found at '$stagedExePath'." }
+  if (-not $SelfContained -and -not $SingleFile) {
+    $stagedRuntimeConfigPath = Join-Path $stagingDir 'XsdAnalyzer.runtimeconfig.json'
+    if (-not (Test-Path $stagedRuntimeConfigPath)) {
+      throw "Framework-dependent publish is incomplete: '$stagedRuntimeConfigPath' was not found."
+    }
+  }
+
+  & $stagedExePath --help | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "Staged executable smoke test failed with exit code $LASTEXITCODE." }
+
+  if ($serviceExistedInitially) {
+    $service = Get-Service -Name $ServiceName -ErrorAction Stop
+    if ($serviceWasRunning) {
+      Write-Host "Stopping service before deployment swap..." -ForegroundColor DarkCyan
+      Stop-Service -Name $ServiceName -ErrorAction Stop
+      $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+    }
+  }
+
+  $backupDir = "$pubDir.backup"
+  if (Test-Path $backupDir) { Remove-Item -Recurse -Force -LiteralPath $backupDir }
+  if (Test-Path $pubDir) { Move-Item -LiteralPath $pubDir -Destination $backupDir }
+  try {
+    Move-Item -LiteralPath $stagingDir -Destination $pubDir
+    $publishSwapped = $true
+  } catch {
+    if (Test-Path $backupDir) { Move-Item -LiteralPath $backupDir -Destination $pubDir }
+    throw
+  }
 }
 
-$exePath = Join-Path (Resolve-FullPath $PublishDir) 'XsdAnalyzer.exe'
+$exePath = Join-Path $pubDir 'XsdAnalyzer.exe'
 if (-not (Test-Path $exePath)) {
   throw "Executable not found at '$exePath'. Ensure publish succeeded or set -PublishDir to a valid location."
 }
-if (-not $SelfContained) {
-  $runtimeConfigPath = Join-Path (Resolve-FullPath $PublishDir) 'XsdAnalyzer.runtimeconfig.json'
+if (-not $SelfContained -and -not $SingleFile) {
+  $runtimeConfigPath = Join-Path $pubDir 'XsdAnalyzer.runtimeconfig.json'
   if (-not (Test-Path $runtimeConfigPath)) {
     throw "Framework-dependent publish is incomplete: '$runtimeConfigPath' was not found. Republish the application before installing the service."
   }
@@ -182,13 +249,26 @@ if (-not (Test-Path $XsdPath)) { throw "XSD path not found: $XsdPath" }
 if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Path $OutDir | Out-Null }
 if (-not (Test-Path $ImportDir)) { New-Item -ItemType Directory -Path $ImportDir | Out-Null }
 
-# Keep service configuration outside the publish directory so dotnet publish cannot remove it.
-$publishRoot = Split-Path -Parent (Resolve-FullPath $PublishDir)
-$configPath = Join-Path $publishRoot 'XsdAnalyzer.appsettings.json'
+# Keep machine-specific configuration outside both the source tree and binary directory.
+$resolvedConfigDir = Resolve-FullPath $ConfigDir
+if (-not (Test-Path $resolvedConfigDir)) { New-Item -ItemType Directory -Force -Path $resolvedConfigDir | Out-Null }
+$configPath = Join-Path $resolvedConfigDir 'appsettings.json'
+$configBackupPath = "$configPath.backup.$PID"
+$hadExistingConfig = Test-Path $configPath
+if ($hadExistingConfig) { Copy-Item -LiteralPath $configPath -Destination $configBackupPath -Force }
 $existingCfg = $null
-if (Test-Path $configPath) {
+$existingConfigPath = $configPath
+if (-not (Test-Path $existingConfigPath)) {
+  $legacyConfigCandidates = @(
+    (Join-Path $PSScriptRoot '..\publish\XsdAnalyzer.appsettings.json'),
+    (Join-Path $PSScriptRoot '..\appsettings.json'),
+    (Join-Path $PSScriptRoot '..\publish\XsdAnalyzer\appsettings.json')
+  )
+  $existingConfigPath = $legacyConfigCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
+if ($existingConfigPath -and (Test-Path $existingConfigPath)) {
   try {
-    $existingRaw = Get-Content -LiteralPath $configPath -Raw -ErrorAction Stop
+    $existingRaw = Get-Content -LiteralPath $existingConfigPath -Raw -ErrorAction Stop
     if ($existingRaw.Trim().StartsWith('{')) { $existingCfg = $existingRaw | ConvertFrom-Json -ErrorAction Stop }
   } catch { $existingCfg = $null }
 }
@@ -228,11 +308,48 @@ $cfg | ConvertTo-Json -Depth 5 | Out-File -FilePath $configPath -Encoding UTF8 -
 if (-not (Test-Path $configPath)) {
   throw "Failed to create service configuration at '$configPath'."
 }
+$configIdentity = if ($objName) { $objName } else { 'NT AUTHORITY\SYSTEM' }
+Protect-ConfigFile -path $configPath -serviceIdentity $configIdentity
 $writtenCfg = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -ErrorAction Stop
 foreach ($requiredSetting in @('Xsd','OutDir','ImportDir','Connection','ServiceName')) {
   $requiredValue = $writtenCfg.$requiredSetting
   if ($null -eq $requiredValue -or [string]::IsNullOrWhiteSpace([string]$requiredValue)) {
     throw "Service configuration '$configPath' is missing required setting '$requiredSetting'."
+  }
+}
+
+function Restore-PreviousDeployment {
+  Write-Warning "Deployment failed; restoring the previous service state."
+  if (Test-ServiceExists $ServiceName) {
+    try {
+      Stop-Service -Name $ServiceName -ErrorAction SilentlyContinue
+      Wait-ServiceStatus -name $ServiceName -status 'Stopped' -timeoutSeconds 30
+    } catch { }
+  }
+  if ($publishSwapped) {
+    if (Test-Path $pubDir) { Remove-Item -Recurse -Force -LiteralPath $pubDir }
+    if (Test-Path $backupDir) { Move-Item -LiteralPath $backupDir -Destination $pubDir }
+  }
+  if ($hadExistingConfig -and (Test-Path $configBackupPath)) {
+    Move-Item -LiteralPath $configBackupPath -Destination $configPath -Force
+  } elseif (-not $hadExistingConfig -and (Test-Path $configPath)) {
+    Remove-Item -Force -LiteralPath $configPath
+  }
+  if ($serviceExistedInitially) {
+    if (-not [string]::IsNullOrWhiteSpace($originalServicePath)) {
+      sc.exe config $ServiceName binPath= $originalServicePath | Out-Null
+    }
+    if ($serviceWasRunning) { sc.exe start $ServiceName | Out-Null }
+  } elseif (Test-ServiceExists $ServiceName) {
+    sc.exe delete $ServiceName | Out-Null
+  }
+}
+
+if ($Publish) {
+  & $exePath --validate-config --config $configPath
+  if ($LASTEXITCODE -ne 0) {
+    Restore-PreviousDeployment
+    throw "Published application rejected service configuration '$configPath'."
   }
 }
 
@@ -247,23 +364,15 @@ function Format-ArgumentQuoted([string]$a) {
 $binPath = ('"{0}" {1}' -f $exePath, (($argsList | ForEach-Object { Format-ArgumentQuoted $_ }) -join ' '))
 Write-Host "binPath: $binPath" -ForegroundColor DarkGray
 
-# 3) Recreate if exists and -Force
+# 3) Stop an existing service when a forced configuration update was requested.
 $exists = Test-ServiceExists $ServiceName
 if ($exists -and $Force) {
-  Write-Host "Service exists; stopping and deleting (Force)..." -ForegroundColor Yellow
-  try {
-    sc.exe stop $ServiceName | Out-Null
-    # Wait for STOPPED
-    Wait-ServiceStatus -name $ServiceName -status 'Stopped' -timeoutSeconds 30
-  } catch {}
-  try {
-    sc.exe delete $ServiceName | Out-Null
-  } catch {}
-  # Wait for deletion to complete to avoid 1072 when recreating
-  if (-not (Wait-ServiceDeletion -name $ServiceName -timeoutSeconds 30)) {
-    Write-Warning "Service '$ServiceName' still present after delete request; it may be marked for deletion. Will continue with guarded create and retry."
+  $existingService = Get-Service -Name $ServiceName -ErrorAction Stop
+  if ($existingService.Status -ne 'Stopped') {
+    Write-Host "Stopping service for forced configuration update..." -ForegroundColor Yellow
+    Stop-Service -Name $ServiceName -ErrorAction Stop
+    $existingService.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
   }
-  $exists = $false
 }
 
 # 4) Create
@@ -312,21 +421,23 @@ if (Test-ServiceExists $ServiceName) {
   sc.exe failureflag $ServiceName 1 | Out-Null
 }
 
-# 6) Start if requested
-if ($Start) {
+# 6) Start when requested or when deployment temporarily stopped a running service.
+$shouldStart = [bool]$Start -or $serviceWasRunning
+if ($shouldStart) {
   Write-Host "Starting service..." -ForegroundColor DarkCyan
   sc.exe start $ServiceName | Write-Output
-  if ($LASTEXITCODE -ne 0) {
-    Write-Warning "Service start reported an error (code $LASTEXITCODE). Checking status..."
+  $startExitCode = $LASTEXITCODE
+  $svc = Get-Service -Name $ServiceName -ErrorAction Stop
+  try { $svc.WaitForStatus('Running', [TimeSpan]::FromSeconds(30)) } catch { }
+  $svc.Refresh()
+  if ($startExitCode -ne 0 -or $svc.Status -ne 'Running') {
+    Restore-PreviousDeployment
+    throw "Service '$ServiceName' failed to reach Running state within 30 seconds (sc.exe exit code $startExitCode, status $($svc.Status))."
   }
-  $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-  if ($svc) {
-    try { $svc.WaitForStatus('Running','00:00:10') } catch {}
-    $svc | Format-Table -AutoSize Status, Name, DisplayName | Out-String | Write-Host
-  } else {
-    Write-Warning "Service '$ServiceName' not found when checking status after start."
-  }
+  $svc | Format-Table -AutoSize Status, Name, DisplayName | Out-String | Write-Host
+  if ($publishSwapped -and (Test-Path $backupDir)) { Remove-Item -Recurse -Force -LiteralPath $backupDir }
 }
+if (Test-Path $configBackupPath) { Remove-Item -Force -LiteralPath $configBackupPath }
 
 Write-Host "Done. Current status:" -ForegroundColor Green
 Get-Service -Name $ServiceName -ErrorAction SilentlyContinue | Format-Table -AutoSize Status, Name, DisplayName

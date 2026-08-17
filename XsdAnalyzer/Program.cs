@@ -10,29 +10,29 @@ using XsdAnalyzer;
 
 [assembly: InternalsVisibleTo("XsdAnalyzer.Tests")]
 
-// Bootstrap logging: capture very early startup issues (especially for Windows Service 1053 diagnostics)
-string _bootstrapOutDir = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "out");
-try { Directory.CreateDirectory(_bootstrapOutDir); } catch { }
-string _bootstrapLog = Path.Combine(_bootstrapOutDir, "startup.log");
-void BootstrapLog(string msg)
-{
-    try { File.AppendAllText(_bootstrapLog, DateTime.Now.ToString("s") + " " + msg + Environment.NewLine); } catch { }
-}
-BootstrapLog("Process starting (pid=" + Environment.ProcessId + ") args=[" + string.Join(" ", args.Select(a => a.Contains(' ') ? '"' + a + '"' : a)) + "]");
+// Capture failures that occur before the generic host and Event Log provider are available.
+string bootstrapOutDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "PatoData", "logs");
 try
 {
-    // placeholder to detect any immediate exceptions; actual logic continues below
+    Directory.CreateDirectory(bootstrapOutDir);
 }
-catch (Exception ex)
+catch
 {
-    BootstrapLog("Early exception: " + ex.Message);
-    throw;
+    bootstrapOutDir = Path.Combine(Path.GetTempPath(), "PatoData", "logs");
+    try { Directory.CreateDirectory(bootstrapOutDir); } catch { }
 }
+string bootstrapLog = Path.Combine(bootstrapOutDir, "startup.log");
+void BootstrapLog(string msg)
+{
+    try { File.AppendAllText(bootstrapLog, DateTime.Now.ToString("s") + " " + msg + Environment.NewLine); } catch { }
+}
+BootstrapLog("Process starting (pid=" + Environment.ProcessId + ") args=[" + string.Join(" ", args.Select(a => a.Contains(' ') ? '"' + a + '"' : a)) + "]");
 
-static int PrintUsage()
+static int PrintUsage(int exitCode)
 {
     Console.WriteLine("Usage: XsdAnalyzer --xsd <path> [--out <dir>]");
     Console.WriteLine("       XsdAnalyzer --service --xsd <path> --out <dir> --schema <name> --import-dir <folder> --connection <conn> [--remote-source-dir <UNC>] [--remote-poll-seconds <int>] [--verbose-import] [--audit] [--debounce-ms <int>] [--ready-wait-ms <int>] [--no-idempotency]");
+    Console.WriteLine("       XsdAnalyzer --validate-config --config <path>");
     Console.WriteLine("       XsdAnalyzer --xsd <path> --out <dir> --schema <name> --import-dir <folder> --connection <conn> [--remote-source-dir <UNC>] [--remote-poll-seconds <int>] [--watch] [--verbose-import] [--audit] [--debounce-ms <int>] [--ready-wait-ms <int>] [--no-idempotency]");
     Console.WriteLine();
     Console.WriteLine("Environment variables (fallbacks when args not provided):");
@@ -40,7 +40,7 @@ static int PrintUsage()
     Console.WriteLine("  PATO_WATCH=1|0, PATO_VERBOSE_IMPORT=1|0, PATO_AUDIT=1|0");
     Console.WriteLine("  PATO_DEBOUNCE_MS, PATO_READY_WAIT_MS, PATO_IDEMPOTENCY_ENABLED=1|0");
     Console.WriteLine("  PATO_REMOTE_SOURCE_DIR, PATO_REMOTE_POLL_SECONDS, PATO_REMOTE_HISTORY_FILE");
-    return 1;
+    return exitCode;
 }
 
 string? xsdPath = null;
@@ -53,6 +53,9 @@ bool watch = false;
 bool verboseImport = false;
 bool audit = false;
 bool runAsService = false;
+bool validateConfig = false;
+bool showHelp = false;
+string? argumentError = null;
 int debounceMs = 200;
 int readyWaitMs = 2000;
 bool idempotencyEnabled = true;
@@ -74,6 +77,8 @@ for (int i = 0; i < args.Length; i++)
     else if (args[i] == "--verbose-import") verboseImport = true;
     else if (args[i] == "--audit") audit = true;
     else if (args[i] == "--service") runAsService = true;
+    else if (args[i] == "--validate-config") validateConfig = true;
+    else if (args[i] is "--help" or "-h") showHelp = true;
     else if (args[i] == "--service-name" && i + 1 < args.Length) serviceNameOverride = args[++i];
     else if (args[i] == "--config" && i + 1 < args.Length) configPath = args[++i];
     else if (args[i] == "--debounce-ms" && i + 1 < args.Length)
@@ -96,6 +101,19 @@ for (int i = 0; i < args.Length; i++)
     {
         if (int.TryParse(args[++i], out var v) && v > 0) remotePollSeconds = v;
     }
+    else
+    {
+        argumentError = $"Unknown or incomplete option '{args[i]}'.";
+        break;
+    }
+}
+
+if (showHelp) return PrintUsage(0);
+if (argumentError is not null)
+{
+    Console.Error.WriteLine(argumentError);
+    BootstrapLog(argumentError);
+    return PrintUsage(2);
 }
 
 // Environment variable fallbacks if values not provided via arguments
@@ -137,14 +155,32 @@ if (string.IsNullOrWhiteSpace(remoteHistoryFile)) remoteHistoryFile = Env("PATO_
 
 // Config file (lowest precedence, but before hard-coded defaults)
 AppConfig? cfg = null;
+var explicitConfigPath = !string.IsNullOrWhiteSpace(configPath);
 if (string.IsNullOrWhiteSpace(configPath))
 {
     var candidate = Path.Combine(Directory.GetCurrentDirectory(), "appsettings.json");
     if (File.Exists(candidate)) configPath = candidate;
 }
-if (!string.IsNullOrWhiteSpace(configPath) && File.Exists(configPath))
+if (explicitConfigPath && !File.Exists(configPath))
 {
-    cfg = XsdAnalyzer.AppConfig.Load(configPath);
+    var message = $"Configuration file '{configPath}' was not found.";
+    Console.Error.WriteLine(message);
+    BootstrapLog(message);
+    return 2;
+}
+if (!string.IsNullOrWhiteSpace(configPath))
+{
+    try
+    {
+        cfg = XsdAnalyzer.AppConfig.Load(configPath);
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+    {
+        var message = $"Failed to load configuration '{configPath}': {ex.Message}";
+        Console.Error.WriteLine(message);
+        BootstrapLog(message);
+        return 2;
+    }
 }
 // Merge from config where still missing
 if (cfg is not null)
@@ -167,16 +203,37 @@ if (cfg is not null)
     remoteHistoryFile ??= cfg.RemoteHistoryFile;
 }
 
+var serviceConfigurationErrors = new List<string>();
+if (string.IsNullOrWhiteSpace(xsdPath)) serviceConfigurationErrors.Add("Missing required setting 'Xsd'.");
+if (string.IsNullOrWhiteSpace(importFolder)) serviceConfigurationErrors.Add("Missing required setting 'ImportDir'.");
+if (string.IsNullOrWhiteSpace(connectionString)) serviceConfigurationErrors.Add("Missing required setting 'Connection'.");
+if (!string.IsNullOrWhiteSpace(xsdPath) && !File.Exists(xsdPath)) serviceConfigurationErrors.Add($"XSD file '{xsdPath}' was not found.");
+
+if (validateConfig)
+{
+    if (serviceConfigurationErrors.Count > 0)
+    {
+        foreach (var error in serviceConfigurationErrors) Console.Error.WriteLine(error);
+        BootstrapLog("Configuration validation failed: " + string.Join(" ", serviceConfigurationErrors));
+        return 2;
+    }
+
+    Console.WriteLine($"Configuration is valid: {Path.GetFullPath(configPath!)}");
+    return 0;
+}
+
 var output = Path.GetFullPath(outDir);
 var logPath = Path.Combine(output, "import.log");
 
 // Windows Service mode
 if (runAsService)
 {
-    if (string.IsNullOrWhiteSpace(importFolder) || string.IsNullOrWhiteSpace(connectionString))
+    if (serviceConfigurationErrors.Count > 0)
     {
-        Console.WriteLine("--service requires --import-dir and --connection");
-        return 1;
+        var message = "Service configuration is invalid: " + string.Join(" ", serviceConfigurationErrors);
+        Console.Error.WriteLine(message);
+        BootstrapLog(message);
+        return 2;
     }
     var host = Host.CreateDefaultBuilder(args)
         .UseWindowsService(opts => opts.ServiceName = string.IsNullOrWhiteSpace(serviceNameOverride) ? "PatoData XML Importer" : serviceNameOverride)
@@ -238,7 +295,7 @@ if (runAsService)
 }
 
 // Non-service CLI flows require an XSD path
-if (string.IsNullOrWhiteSpace(xsdPath)) return PrintUsage();
+if (string.IsNullOrWhiteSpace(xsdPath)) return PrintUsage(1);
 
 try
 {

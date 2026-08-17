@@ -93,7 +93,7 @@ SQL auth note:
 - The service runs under a Windows account (default: LocalSystem). When using Trusted_Connection=True, SQL Server authenticates as that account (e.g., NT AUTHORITY\SYSTEM). Ensure that login exists and has rights to the target database (PatoData), or configure the service to run under a domain/user account mapped in SQL, or use SQL authentication in the connection string.
 
 Helper scripts:
-- Install and start the service (publishes to `publish/XsdAnalyzer` by default):
+- Install and start the service from an elevated PowerShell. Binaries are installed under `C:\Program Files\PatoData\XsdAnalyzer` and machine-specific configuration under `C:\ProgramData\PatoData\XsdAnalyzer` by default:
 
 	```powershell
 	.\scripts\install-importer-service.ps1 -Connection "Server=.\SQLEXPRESS;Database=Pato;Trusted_Connection=True;TrustServerCertificate=True" -Start
@@ -112,7 +112,7 @@ Helper scripts:
 	.\scripts\uninstall-importer-service.ps1
 	```
 
-Parameters include `-ServiceName`, `-DisplayName`, `-XsdPath`, `-OutDir`, `-Schema`, `-ImportDir`, `-VerboseImport`, `-Audit`, and publishing controls (`-PublishDir`, `-Runtime`, `-SelfContained`, `-SingleFile`).
+Parameters include `-ServiceName`, `-DisplayName`, `-XsdPath`, `-OutDir`, `-Schema`, `-ImportDir`, `-VerboseImport`, `-Audit`, and publishing controls (`-PublishDir`, `-ConfigDir`, `-Runtime`, `-SelfContained`, `-SingleFile`). Publishing occurs in a staging directory; the active installation is replaced only after the staged executable passes a smoke test. Failed configuration validation or startup restores the previous deployment.
 
 Remote polling parameters now supported directly on the installer script:
 
@@ -133,7 +133,13 @@ Remote polling parameters now supported directly on the installer script:
 
 If `-RemoteSourceDir` is omitted, remote ingestion is disabled and the service logs `[remote] Disabled` (or a not-found status if a path was specified but is unreachable).
 
-Generated `publish/XsdAnalyzer.appsettings.json` will include only provided remote keys and is kept outside the application publish folder so republishing cannot delete it. You can later edit and restart the service to change these settings. To remove remote polling, delete those keys and restart (the history file can be left intact for future reactivation).
+Generated `C:\ProgramData\PatoData\XsdAnalyzer\appsettings.json` includes only provided or migrated remote keys and is kept outside the binary directory so publishing cannot delete it. You can later edit and restart the service to change these settings. To remove remote polling, delete those keys and restart (the history file can be left intact for future reactivation).
+
+Validate configuration without starting the service or importing files:
+
+```powershell
+& 'C:\Program Files\PatoData\XsdAnalyzer\XsdAnalyzer.exe' --validate-config --config 'C:\ProgramData\PatoData\XsdAnalyzer\appsettings.json'
+```
 
 - Reinstall and verify flags (no `--verbose-import`, no `--audit`):
 
@@ -173,6 +179,8 @@ Flags and defaults:
 Troubleshooting:
 
 - On startup, the service writes a line like `Startup: XSD=…; ImportDir=…; OutDir=…; Schema=…; Tables=N; …` to `out/import.log`. Ensure `Tables > 0` and paths are correct.
+- Failures before the generic host starts are written to `C:\ProgramData\PatoData\logs\startup.log` (with a temporary-directory fallback if ProgramData is not writable).
+- An explicitly supplied missing or malformed `--config` exits immediately with code 2 and records the exact error in the bootstrap log instead of surfacing only as SCM events 7000/7009.
 - If `import_audit.csv` appears unexpectedly, check the service binPath (via `sc.exe qc`) and VS Code tasks to ensure `--audit` isn’t being passed.
 - If files are moved but rows are not inserted, verify service account SQL/NTFS permissions and that the XSD path is accessible to the service.
 

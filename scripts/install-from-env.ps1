@@ -43,6 +43,7 @@ $params = @{
   Publish       = (-not $SkipPublish)
   Project       = $Project
   PublishDir    = $PublishDir
+  ConfigDir     = $ConfigDir
   Runtime       = $Runtime
   Configuration = $Configuration
   SingleFile    = [bool]$SingleFile
@@ -52,6 +53,9 @@ $params = @{
 }
 if ($Account)   { $params.Account  = $Account }
 if ($passToUse) { $params.Password = $passToUse }
+if ($RemoteSourceDir) { $params.RemoteSourceDir = $RemoteSourceDir }
+if ($env:PATO_REMOTE_POLL_SECONDS) { $params.RemotePollSeconds = [int]$RemotePollSeconds }
+if ($RemoteHistoryFile) { $params.RemoteHistoryFile = $RemoteHistoryFile }
 
 # Invoke installer with named splatting
 & $install @params
